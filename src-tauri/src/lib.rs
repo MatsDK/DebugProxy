@@ -1,31 +1,40 @@
+mod cert;
+mod procs;
 mod proxy;
 
-use proxy::{ProxyState, start_proxy, stop_proxy, get_ca_cert, get_local_ip, toggle_ssl_intercept, is_ssl_intercept_enabled, submit_script_result, toggle_scripting, set_script_patterns};
-use tauri::Manager;
+use procs::{Api, ApiImpl, Scripts, ScriptsImpl};
+use proxy::ProxyState;
+use taurpc::Router;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
+pub async fn run() {
+    // ProxyState is Clone and all its fields are Arc<...>, so cloning
+    // gives both handlers the *same* underlying shared state. There is probably a better way to share the state...
+    let state = ProxyState::default();
+
+    let router = Router::new()
+        .export_config(
+            specta_typescript::Typescript::default()
+                .header("// My header\n")
+                .bigint(specta_typescript::BigIntExportBehavior::String)
+        )
+        .merge(
+            ApiImpl {
+                state: state.clone(),
+            }
+            .into_handler(),
+        )
+        .merge(
+            ScriptsImpl {
+                state: state.clone(),
+            }
+            .into_handler(),
+        );
+
     tauri::Builder::default()
         .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
-        .manage(ProxyState::default())
-        .setup(|app| {
-            if let Some(window) = app.get_webview_window("main") {
-                window.open_devtools();
-            }
-            Ok(())
-        })
-        .invoke_handler(tauri::generate_handler![
-            start_proxy,
-            stop_proxy,
-            get_ca_cert,
-            get_local_ip,
-            toggle_ssl_intercept,
-            is_ssl_intercept_enabled,
-            submit_script_result,
-            toggle_scripting,
-            set_script_patterns
-        ])
+        .invoke_handler(router.into_handler())
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
