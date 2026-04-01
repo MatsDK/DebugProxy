@@ -31,7 +31,7 @@
     "CONNECT",
   ];
   let activeMethods = $state(
-    new Set(ALL_METHODS.filter((m) => m !== "CONNECT")),
+    new Set(ALL_METHODS),
   );
 
   function toggleMethod(m: string) {
@@ -165,6 +165,12 @@
   async function toggleSsl() {
     try {
       await invoke("toggle_ssl_intercept", { enabled: interceptSsl });
+      if (isRunning) {
+        // Restart proxy to force-close old connections and apply new intercept state
+        await invoke("stop_proxy");
+        await new Promise(r => setTimeout(r, 100));
+        await invoke("start_proxy", { port });
+      }
     } catch (e: any) {
       errorMsg = "Failed to toggle SSL intercept: " + e;
     }
@@ -321,8 +327,11 @@
       <label class="flex items-center gap-1.5 cursor-pointer text-[11px] font-bold text-slate-500 tracking-wide uppercase select-none hover:text-slate-700 dark:hover:text-slate-300 transition-colors">
         <input 
           type="checkbox" 
-          bind:checked={interceptSsl} 
-          onchange={toggleSsl} 
+          checked={interceptSsl} 
+          onchange={(e) => {
+            interceptSsl = e.currentTarget.checked;
+            toggleSsl();
+          }} 
           class="w-3.5 h-3.5 rounded border-slate-300 dark:border-[#30363d] text-blue-600 focus:ring-blue-500 bg-white dark:bg-[#0d1117] cursor-pointer" 
         />
         <span>SSL MITM</span>

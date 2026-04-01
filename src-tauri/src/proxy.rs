@@ -18,7 +18,13 @@ use std::net::SocketAddr;
 pub struct ProxyHandler {
     app_handle: AppHandle,
     ca_cert_pem: String,
-    request_map: Arc<Mutex<std::collections::HashMap<std::net::SocketAddr, Vec<u64>>>>,
+    intercept_ssl: Arc<Mutex<bool>>,
+    is_running: Arc<Mutex<bool>>,
+    next_id: Arc<std::sync::atomic::AtomicU64>,
+    request_id: Option<u64>,
+    request_timestamp: Option<u64>,
+    request_method: Option<String>,
+    request_uri: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -34,19 +40,22 @@ pub struct ProxyEvent {
 }
 
 impl ProxyHandler {
-    pub fn new(app_handle: AppHandle, ca_cert_pem: String) -> Self {
+    pub fn new(app_handle: AppHandle, ca_cert_pem: String, intercept_ssl: Arc<Mutex<bool>>, is_running: Arc<Mutex<bool>>, next_id: Arc<std::sync::atomic::AtomicU64>) -> Self {
         Self {
             app_handle,
             ca_cert_pem,
-            request_map: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            intercept_ssl,
+            is_running,
+            next_id,
+            request_id: None,
+            request_timestamp: None,
+            request_method: None,
+            request_uri: None,
         }
     }
 
-    fn generate_id() -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as u64
+    fn generate_id(&self) -> u64 {
+        self.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -54,40 +63,65 @@ use http_body_util::BodyExt;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
 impl HttpHandler for ProxyHandler {
+    async fn should_intercept(
+        &mut self,
+        _ctx: &hudsucker::HttpContext,
+        req: &Request<hudsucker::Body>,
+    ) -> bool {
+        if !*self.is_running.lock().await {
+            return false;
+        }
+        let intercept = self.intercept_ssl.lock().await;
+        let enabled = *intercept;
+        log::info!("SSL MITM for {}: {}", req.uri(), enabled);
+        enabled
+    }
+
     async fn handle_request(
         &mut self,
         _ctx: &HttpContext,
         req: Request<hudsucker::Body>,
     ) -> RequestOrResponse {
-        // Serve a landing page on the root or /cert to download the CA
-         if req.uri().path() == "/" || req.uri().path() == "/cert" {
-            let html = format!(
-                "<html>
-                <head><title>Antigravity Proxy</title><meta name='viewport' content='width=device-width, initial-scale=1.0'></head>
-                <body style='font-family: sans-serif; text-align: center; margin-top: 50px;'>
-                    <h2>Debugging Proxy CA</h2>
-                    <p>Install this root certificate to allow HTTPS decryption.</p>
-                    <a href='/ca.crt' style='display:inline-block; padding: 15px 25px; background: #6366f1; color: white; text-decoration: none; border-radius: 8px; font-weight: bold;'>Download CA Certificate</a>
-                </body>
-                </html>"
-            );
+        log::info!("--> {} {}", req.method(), req.uri());
+        if !*self.is_running.lock().await {
             return RequestOrResponse::Response(
                 Response::builder()
-                    .status(StatusCode::OK)
-                    .header(header::CONTENT_TYPE, "text/html")
-                    .body(hudsucker::Body::from(Full::new(Bytes::from(html))))
+                    .status(StatusCode::SERVICE_UNAVAILABLE)
+                    .body(hudsucker::Body::empty())
                     .unwrap()
             );
         }
+        // Serve a landing page on proxy.local to download the CA
+        if req.uri().host() == Some("proxy.local") {
+            if req.uri().path() == "/" || req.uri().path() == "/cert" {
+                let html = format!(
+                    "<html>
+                    <head><title>Antigravity Proxy</title><meta name='viewport' content='width=device-width, initial-scale=1.0'></head>
+                    <body style='font-family: sans-serif; text-align: center; margin-top: 50px;'>
+                        <h2>Debugging Proxy CA</h2>
+                        <p>Install this root certificate to allow HTTPS decryption.</p>
+                        <a href='/ca.crt' style='display:inline-block; padding: 15px 25px; background: #6366f1; color: white; text-decoration: none; border-radius: 8px; font-weight: bold;'>Download CA Certificate</a>
+                    </body>
+                    </html>"
+                );
+                return RequestOrResponse::Response(
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, "text/html")
+                        .body(hudsucker::Body::from(Full::new(Bytes::from(html))))
+                        .unwrap()
+                );
+            }
 
-        if req.uri().path() == "/ca.crt" {
-            let res = Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "application/x-x509-ca-cert")
-                .header(header::CONTENT_DISPOSITION, "attachment; filename=\"antigravity-proxy-ca.crt\"")
-                .body(hudsucker::Body::from(Full::new(Bytes::from(self.ca_cert_pem.clone()))))
-                .unwrap();
-            return RequestOrResponse::Response(res);
+            if req.uri().path() == "/ca.crt" {
+                let res = Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "application/x-x509-ca-cert")
+                    .header(header::CONTENT_DISPOSITION, "attachment; filename=\"antigravity-proxy-ca.crt\"")
+                    .body(hudsucker::Body::from(Full::new(Bytes::from(self.ca_cert_pem.clone()))))
+                    .unwrap();
+                return RequestOrResponse::Response(res);
+            }
         }
 
         let mut req = req;
@@ -101,13 +135,9 @@ impl HttpHandler for ProxyHandler {
 
         let method = req.method().to_string();
         let uri = req.uri().to_string();
-        let id = Self::generate_id();
+        let id = self.generate_id();
         let is_connect = method == "CONNECT";
 
-        if !is_connect {
-            let mut map = self.request_map.lock().await;
-            map.entry(_ctx.client_addr).or_default().push(id);
-        }
         let is_upgrade = req.headers().get(header::UPGRADE).is_some();
 
         let (body_base64, req) = if is_connect || is_upgrade {
@@ -123,11 +153,16 @@ impl HttpHandler for ProxyHandler {
             (b64, new_req)
         };
 
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
         let event = ProxyEvent {
             id,
-            timestamp: id / 1_000_000,
-            method,
-            uri,
+            timestamp,
+            method: method.clone(),
+            uri: uri.clone(),
             headers,
             is_response: false,
             status: None,
@@ -136,12 +171,17 @@ impl HttpHandler for ProxyHandler {
 
         let _ = self.app_handle.emit("proxy_request", &event);
         
+        self.request_id = Some(id);
+        self.request_timestamp = Some(timestamp);
+        self.request_method = Some(method);
+        self.request_uri = Some(uri);
+
         RequestOrResponse::Request(req)
     }
 
     async fn handle_response(
         &mut self,
-        ctx: &HttpContext,
+        _ctx: &HttpContext,
         res: Response<hudsucker::Body>,
     ) -> Response<hudsucker::Body> {
         let mut headers = Vec::new();
@@ -149,18 +189,7 @@ impl HttpHandler for ProxyHandler {
             headers.push((k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).to_string()));
         }
 
-        let id = {
-            let mut map = self.request_map.lock().await;
-            if let Some(ids) = map.get_mut(&ctx.client_addr) {
-                if !ids.is_empty() {
-                    ids.remove(0)
-                } else {
-                    Self::generate_id()
-                }
-            } else {
-                Self::generate_id()
-            }
-        };
+
 
         let is_upgrade = res.status() == hudsucker::hyper::StatusCode::SWITCHING_PROTOCOLS;
         let is_sse = res.headers().get(header::CONTENT_TYPE)
@@ -180,11 +209,16 @@ impl HttpHandler for ProxyHandler {
             (b64, new_res)
         };
 
+        let id = self.request_id.unwrap_or_else(|| self.generate_id());
+        let timestamp = self.request_timestamp.unwrap_or(0);
+        let method = self.request_method.clone().unwrap_or_default();
+        let uri = self.request_uri.clone().unwrap_or_default();
+
         let event = ProxyEvent {
             id,
-            timestamp: id / 1_000_000,
-            method: "".to_string(), // Can't easily recover method without storing mapping
-            uri: "".to_string(),    // or ctx.uri()
+            timestamp,
+            method,
+            uri,
             headers,
             is_response: true,
             status: Some(res.status().as_u16()),
@@ -202,6 +236,23 @@ pub struct ProxyState {
     pub ca_cert_pem: Arc<Mutex<Option<String>>>,
     pub port: Arc<Mutex<Option<u16>>>,
     pub proxy_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    pub intercept_ssl: Arc<Mutex<bool>>,
+    pub shutdown_signal: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+    pub next_id: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl Default for ProxyState {
+    fn default() -> Self {
+        Self {
+            is_running: Arc::new(Mutex::new(false)),
+            ca_cert_pem: Arc::new(Mutex::new(None)),
+            port: Arc::new(Mutex::new(None)),
+            proxy_task: Arc::new(Mutex::new(None)),
+            intercept_ssl: Arc::new(Mutex::new(true)),
+            shutdown_signal: Arc::new(Mutex::new(None)),
+            next_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+        }
+    }
 }
 
 #[tauri::command]
@@ -209,6 +260,22 @@ pub async fn get_local_ip() -> Result<String, String> {
     local_ip_address::local_ip()
         .map(|ip| ip.to_string())
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn toggle_ssl_intercept(state: tauri::State<'_, ProxyState>, enabled: bool) -> Result<(), String> {
+    log::info!("toggle_ssl_intercept called with: {}", enabled);
+    let mut intercept = state.intercept_ssl.lock().await;
+    *intercept = enabled;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn is_ssl_intercept_enabled(state: tauri::State<'_, ProxyState>) -> Result<bool, String> {
+    let intercept = state.intercept_ssl.lock().await;
+    let enabled = *intercept;
+    log::info!("is_ssl_intercept_enabled: {}", enabled);
+    Ok(enabled)
 }
 
 fn ca_paths(app: &AppHandle) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
@@ -275,26 +342,35 @@ pub async fn start_proxy(
     let issuer = Issuer::from_ca_cert_pem(&cert_pem, key_pair_parsed).map_err(|e| e.to_string())?;
 
     let ca = RcgenAuthority::new(issuer, 1_000, ring::default_provider());
-    let handler = ProxyHandler::new(app, cert_pem.clone());
+    let handler = ProxyHandler::new(app, cert_pem.clone(), state.intercept_ssl.clone(), state.is_running.clone(), state.next_id.clone());
 
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+    
     let proxy = Proxy::builder()
         .with_addr(SocketAddr::from(([0, 0, 0, 0], port)))
         .with_ca(ca)
         .with_rustls_connector(ring::default_provider())
         .with_http_handler(handler)
+        .with_graceful_shutdown(async move {
+            rx.await.ok();
+            log::info!("Graceful shutdown signal received");
+        })
         .build()
         .map_err(|e| e.to_string())?;
 
     let is_running_clone = state.is_running.clone();
     let handle = tokio::spawn(async move {
         *is_running_clone.lock().await = true;
+        log::info!("Proxy task started on port {}", port);
         if let Err(e) = proxy.start().await {
-            log::error!("Proxy error: {}", e);
+            log::error!("Proxy error (likely bind failure): {}", e);
         }
         *is_running_clone.lock().await = false;
+        log::info!("Proxy task stopped");
     });
 
     *state.proxy_task.lock().await = Some(handle);
+    *state.shutdown_signal.lock().await = Some(tx);
     *state.ca_cert_pem.lock().await = Some(cert_pem);
     *state.port.lock().await = Some(port);
 
@@ -303,6 +379,13 @@ pub async fn start_proxy(
 
 #[tauri::command]
 pub async fn stop_proxy(state: tauri::State<'_, ProxyState>) -> Result<(), String> {
+    // 1. Send shutdown signal to kill active connections
+    if let Some(tx) = state.shutdown_signal.lock().await.take() {
+        let _ = tx.send(());
+        log::info!("Sent shutdown signal to connections");
+    }
+
+    // 2. Abort the main listener task
     let mut task_opt = state.proxy_task.lock().await;
     if let Some(handle) = task_opt.take() {
         handle.abort();
