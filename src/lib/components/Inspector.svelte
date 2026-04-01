@@ -1,28 +1,34 @@
 <script lang="ts">
-  import type { ProxyEvent } from "$lib/types";
+  import type { ProxyEvent, ScriptLog } from "$lib/types";
   import JsonViewer from "./JsonViewer.svelte";
+  import { PaneGroup, Pane, PaneResizer } from "paneforge";
 
-  let { req, res }: { req: ProxyEvent; res: ProxyEvent | null } = $props();
+  let {
+    req,
+    res,
+    logs,
+  }: { req: ProxyEvent; res: ProxyEvent | null; logs: ScriptLog[] } = $props();
 
-  let reqTab = $state<"headers" | "body">("body");
-  let resTab = $state<"headers" | "body">("body");
-
-  let prevReqId = $state(-1);
-  let prevResId = $state(-1);
+  let reqTab = $state<"headers" | "body">("headers");
+  let resTab = $state<"headers" | "body">("headers");
 
   $effect(() => {
-    if (req && req.id !== prevReqId) {
-      prevReqId = req.id;
-      reqTab = req.body_base64 && req.body_base64.length > 0 ? "body" : "headers";
+    if (req && req.body_base64) {
+      reqTab = "body";
+    } else {
+      reqTab = "headers";
     }
   });
 
   $effect(() => {
-    if (res && res.id !== prevResId) {
-      prevResId = res.id;
-      resTab = res.body_base64 && res.body_base64.length > 0 ? "body" : "headers";
+    if (res && res.body_base64) {
+      resTab = "body";
+    } else {
+      resTab = "headers";
     }
   });
+
+  let scriptLogs = $derived(logs.filter((l) => l.requestId === req.id));
 
   function statusColor(status: number | null) {
     if (!status) return "text-slate-400";
@@ -42,124 +48,447 @@
     );
   }
 
-  function formatBody(b64: string | null) {
+  function formatBodyStr(b64: string | null): any {
     if (!b64) return null;
+    const str = atob(b64);
     try {
-      return JSON.parse(atob(b64));
+      return JSON.parse(str);
     } catch {
-      return atob(b64);
+      return str;
     }
   }
 
-  let reqBody = $derived(formatBody(req.body_base64));
-  let resBody = $derived(res ? formatBody(res.body_base64) : null);
+  let reqBody = $derived(formatBodyStr(req.body_base64));
+  let resBody = $derived(res ? formatBodyStr(res.body_base64) : null);
+
+  // Container width observer
+  let containerWidth = $state(0);
+  let isNarrow = $derived(containerWidth > 0 && containerWidth < 1400);
 </script>
 
-<div class="flex flex-col flex-1 min-h-0 bg-white dark:bg-[#0d1117]">
+<div
+  class="flex flex-col flex-1 min-h-0 bg-white dark:bg-[#0d1117] font-sans"
+  bind:clientWidth={containerWidth}
+>
   <!-- Details header -->
-  <div class="px-4 py-2 border-b border-slate-200 dark:border-[#30363d] bg-slate-50 dark:bg-[#161b22] shrink-0 flex items-baseline gap-2">
-    <span class="font-mono font-semibold text-xs {methodColor(req.method)}">{req.method}</span>
-    <span class="font-mono text-xs text-blue-600 dark:text-blue-400 break-all select-all">{req.uri}</span>
+  <div
+    class="h-9 border-y border-slate-200 dark:border-[#30363d] bg-slate-50 dark:bg-[#161b22] shrink-0 flex items-center px-3 gap-3"
+  >
+    <span
+      class="font-mono font-bold text-xs {methodColor(
+        req.method,
+      )} uppercase tracking-tighter shrink-0">{req.method}</span
+    >
+    <span
+      class="font-mono text-xs text-slate-500 dark:text-slate-400 truncate select-all"
+      >{req.uri}</span
+    >
   </div>
 
-  <div class="flex flex-1 min-h-0">
-    <!-- Request Pane -->
-    <div class="flex flex-col flex-1 min-w-0 border-r border-slate-200 dark:border-[#30363d]">
-      <div class="bg-slate-100 dark:bg-[#21262d] border-b border-slate-200 dark:border-[#30363d] text-[11px] font-semibold uppercase text-slate-500 flex items-center shrink-0">
-        <span class="px-3 py-1 border-r border-slate-200 dark:border-[#30363d]">Request</span>
-        
-        <button
-          class="px-3 py-1 hover:bg-slate-200 dark:hover:bg-[#30363d] transition-colors border-r border-slate-200 dark:border-[#30363d] {reqTab === 'headers' ? 'text-blue-600 dark:text-blue-400 bg-white dark:bg-[#0d1117]' : ''}"
-          onclick={() => (reqTab = "headers")}
+  <PaneGroup
+    direction={isNarrow ? "vertical" : "horizontal"}
+    class="flex flex-1 min-h-0 overflow-hidden"
+  >
+    {#if isNarrow}
+      <Pane defaultSize={50} minSize={20} class="flex min-h-0 overflow-hidden">
+        <PaneGroup
+          direction="horizontal"
+          class="flex flex-1 min-h-0 overflow-hidden"
         >
-          Headers ({req.headers.length})
-        </button>
-        <button
-          class="px-3 py-1 hover:bg-slate-200 dark:hover:bg-[#30363d] transition-colors {reqTab === 'body' ? 'text-blue-600 dark:text-blue-400 bg-white dark:bg-[#0d1117]' : ''}"
-          onclick={() => (reqTab = "body")}
-        >
-          Body
-        </button>
-      </div>
-
-      <div class="flex-1 overflow-y-auto bg-white dark:bg-[#0d1117]">
-        {#if reqTab === "headers"}
-          <div class="border border-slate-200 dark:border-[#30363d] rounded overflow-hidden">
-            {#each req.headers as [k, v]}
-              <div class="flex text-[11px] font-mono border-b border-slate-100 dark:border-[#21262d] last:border-b-0">
-                <span class="w-36 shrink-0 px-2 py-1 bg-slate-50 dark:bg-[#161b22] text-blue-700 dark:text-blue-300 font-semibold border-r border-slate-200 dark:border-[#30363d] break-all">{k}</span>
-                <span class="flex-1 px-2 py-1 text-slate-700 dark:text-slate-300 break-all">{v}</span>
+          <Pane
+            defaultSize={50}
+            minSize={20}
+            class="flex flex-col border-r border-slate-200 dark:border-[#30363d] overflow-hidden"
+          >
+            <div
+              class="h-8 bg-slate-100/50 dark:bg-[#1c2128] border-b border-slate-200 dark:border-[#30363d] flex items-center px-2 shrink-0"
+            >
+              <span
+                class="text-[10px] font-black text-slate-500 uppercase tracking-widest"
+                >Request</span
+              >
+              <div class="flex h-full gap-1 ml-4">
+                <button
+                  class="px-2 h-full text-[11px] font-bold {reqTab === 'headers'
+                    ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500'
+                    : 'text-slate-400'}"
+                  onclick={() => (reqTab = "headers")}>Headers</button
+                >
+                <button
+                  class="px-2 h-full text-[11px] font-bold {reqTab === 'body'
+                    ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500'
+                    : 'text-slate-400'}"
+                  onclick={() => (reqTab = "body")}>Body</button
+                >
               </div>
-            {/each}
-            {#if !req.headers.length}
-              <div class="px-2 py-1 text-xs text-slate-400 italic">No headers found</div>
-            {/if}
-          </div>
-        {:else}
-          {#if reqBody === null}
-            <div class="text-slate-400 italic text-xs">No request body captured.</div>
-          {:else if typeof reqBody === "object"}
-            <JsonViewer data={reqBody} />
-          {:else}
-            <pre class="text-[11px] font-mono bg-white dark:bg-[#0d1117] p-3 m-0 whitespace-pre-wrap break-all text-slate-800 dark:text-slate-200 min-h-full">{reqBody}</pre>
-          {/if}
-        {/if}
-      </div>
-    </div>
-
-    <!-- Response Pane -->
-    <div class="flex flex-col flex-1 min-w-0">
-      <div class="bg-slate-100 dark:bg-[#21262d] border-b border-slate-200 dark:border-[#30363d] text-[11px] font-semibold uppercase text-slate-500 flex justify-between items-center shrink-0">
-        <div class="flex items-center">
-          <span class="px-3 py-1 border-r border-slate-200 dark:border-[#30363d]">Response</span>
-          
-          <button
-            class="px-3 py-1 border-r border-slate-200 dark:border-[#30363d] hover:bg-slate-200 dark:hover:bg-[#30363d] transition-colors {resTab === 'headers' ? 'text-blue-600 dark:text-blue-400 bg-white dark:bg-[#0d1117]' : ''}"
-            onclick={() => (resTab = "headers")}
-          >
-            Headers ({res?.headers.length ?? 0})
-          </button>
-          <button
-            class="px-3 py-1 hover:bg-slate-200 dark:hover:bg-[#30363d] transition-colors border-r border-slate-200 dark:border-[#30363d] {resTab === 'body' ? 'text-blue-600 dark:text-blue-400 bg-white dark:bg-[#0d1117]' : ''}"
-            onclick={() => (resTab = "body")}
-          >
-            Body
-          </button>
-        </div>
-        {#if res}
-          <span class="px-3 py-1 font-semibold {statusColor(res.status)}">{res.status}</span>
-        {:else}
-          <span class="px-3 py-1 text-slate-400 text-[10px] capitalize font-medium">Waiting...</span>
-        {/if}
-      </div>
-
-      <div class="flex-1 overflow-y-auto bg-white dark:bg-[#0d1117]">
-        {#if res}
-          {#if resTab === "headers"}
-            <div class="border border-slate-200 dark:border-[#30363d] rounded overflow-hidden">
-              {#each res.headers as [k, v]}
-                <div class="flex text-[11px] font-mono border-b border-slate-100 dark:border-[#21262d] last:border-b-0">
-                  <span class="w-36 shrink-0 px-2 py-1 bg-slate-50 dark:bg-[#161b22] text-blue-700 dark:text-blue-300 font-semibold border-r border-slate-200 dark:border-[#30363d] break-all">{k}</span>
-                  <span class="flex-1 px-2 py-1 text-slate-700 dark:text-slate-300 break-all">{v}</span>
+            </div>
+            <div class="flex-1 overflow-y-auto p-2">
+              {#if reqTab === "headers"}
+                <div class="space-y-0.5">
+                  {#each req.headers as [k, v]}
+                    <div
+                      class="flex text-[11px] font-mono border-b border-black/5 dark:border-white/5 py-0.5"
+                    >
+                      <span
+                        class="w-32 shrink-0 text-indigo-600 dark:text-indigo-400 font-bold truncate"
+                        >{k}</span
+                      >
+                      <span
+                        class="flex-1 text-slate-600 dark:text-slate-300 break-all"
+                        >{v}</span
+                      >
+                    </div>
+                  {/each}
                 </div>
-              {/each}
-              {#if !res.headers.length}
-                <div class="px-2 py-1 text-xs text-slate-400 italic">No headers found</div>
+              {:else if reqBody === null}
+                <div class="text-slate-400 italic text-[11px]">No body.</div>
+              {:else if typeof reqBody === "object"}
+                <div class="text-xs">
+                  <JsonViewer data={reqBody} />
+                </div>
+              {:else}
+                <pre
+                  class="text-[11px] font-mono whitespace-pre-wrap break-all">{reqBody}</pre>
               {/if}
             </div>
-          {:else}
-            {#if resBody === null}
-              <div class="text-slate-400 italic text-xs">No response body captured.</div>
-            {:else if typeof resBody === "object"}
-              <JsonViewer data={resBody} />
-            {:else}
-              <pre class="text-[11px] font-mono bg-white dark:bg-[#0d1117] p-3 m-0 whitespace-pre-wrap break-all text-slate-800 dark:text-slate-200 min-h-full">{resBody}</pre>
-            {/if}
+          </Pane>
+          <PaneResizer
+            class="w-1 bg-transparent hover:bg-indigo-500/30 cursor-col-resize shrink-0 transition-colors"
+          />
+          <Pane
+            defaultSize={50}
+            minSize={20}
+            class="flex flex-col border-r border-slate-200 dark:border-[#30363d] overflow-hidden"
+          >
+            <div
+              class="h-8 bg-slate-100/50 dark:bg-[#1c2128] border-b border-slate-200 dark:border-[#30363d] flex items-center justify-between px-2 shrink-0"
+            >
+              <div class="flex items-center h-full">
+                <span
+                  class="text-[10px] font-black text-slate-500 uppercase tracking-widest"
+                  >Response</span
+                >
+                <div class="flex h-full gap-1 ml-4">
+                  <button
+                    class="px-2 h-full text-[11px] font-bold {resTab ===
+                    'headers'
+                      ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500'
+                      : 'text-slate-400'}"
+                    onclick={() => (resTab = "headers")}>Headers</button
+                  >
+                  <button
+                    class="px-2 h-full text-[11px] font-bold {resTab === 'body'
+                      ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500'
+                      : 'text-slate-400'}"
+                    onclick={() => (resTab = "body")}>Body</button
+                  >
+                </div>
+              </div>
+              {#if res}
+                <span class="text-[11px] font-bold {statusColor(res.status)}"
+                  >{res.status}</span
+                >
+              {/if}
+            </div>
+            <div class="flex-1 overflow-y-auto p-2">
+              {#if res}
+                {#if resTab === "headers"}
+                  <div class="space-y-0.5">
+                    {#each res.headers as [k, v]}
+                      <div
+                        class="flex text-[11px] font-mono border-b border-black/5 dark:border-white/5 py-0.5"
+                      >
+                        <span
+                          class="w-32 shrink-0 text-indigo-600 dark:text-indigo-400 font-bold truncate"
+                          >{k}</span
+                        >
+                        <span
+                          class="flex-1 text-slate-600 dark:text-slate-300 break-all"
+                          >{v}</span
+                        >
+                      </div>
+                    {/each}
+                  </div>
+                {:else if resBody === null}
+                  <div class="text-slate-400 italic text-[11px]">No body.</div>
+                {:else if typeof resBody === "object"}
+                  <div class="text-xs">
+                    <JsonViewer data={resBody} />
+                  </div>
+                {:else}
+                  <pre
+                    class="text-[11px] font-mono whitespace-pre-wrap break-all">{resBody}</pre>
+                {/if}
+              {:else}
+                <div class="text-slate-400 italic text-[11px] py-4 text-center">
+                  Pending...
+                </div>
+              {/if}
+            </div>
+          </Pane>
+        </PaneGroup>
+      </Pane>
+      <PaneResizer
+        class="h-1 bg-transparent hover:bg-indigo-500/30 cursor-row-resize shrink-0 transition-colors border-t border-slate-200 dark:border-[#30363d]"
+      />
+      <Pane
+        defaultSize={50}
+        minSize={20}
+        class="flex flex-col bg-slate-50/50 dark:bg-black/20 overflow-hidden"
+      >
+        <div
+          class="h-8 bg-slate-100/50 dark:bg-[#1c2128] border-b border-slate-200 dark:border-[#30363d] flex items-center px-2 shrink-0"
+        >
+          <span
+            class="text-[10px] font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest"
+            >Script Logs</span
+          >
+          {#if scriptLogs.length > 0}
+            <span
+              class="ml-2 px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 text-[9px] font-bold"
+              >{scriptLogs.length}</span
+            >
           {/if}
-        {:else}
-          <div class="text-slate-400 italic text-xs mt-10 text-center">Response is pending...</div>
-        {/if}
-      </div>
-    </div>
-  </div>
+        </div>
+        <div class="flex-1 overflow-y-auto p-2 space-y-1.5">
+          {#if scriptLogs.length === 0}
+            <div class="text-slate-400 italic text-[10px] py-10 text-center">
+              No script output.
+            </div>
+          {:else}
+            {#each scriptLogs as log}
+              <div
+                class="flex flex-col border-b border-black/5 dark:border-white/5 pb-1 last:border-0 border-slate-100 dark:border-white/5"
+              >
+                <div class="flex gap-2 items-baseline">
+                  <span class="text-slate-400 shrink-0 text-[10px] font-mono"
+                    >{new Date(log.timestamp)
+                      .toLocaleTimeString()
+                      ?.split(" ")[0]}</span
+                  >
+                  <span
+                    class="font-bold {log.level === 'error'
+                      ? 'text-red-500'
+                      : 'text-indigo-500'} uppercase text-[9px]"
+                  >
+                    {log.level}
+                  </span>
+                  {#if typeof log.message === "string"}
+                    <span
+                      class="text-xs font-mono text-slate-700 dark:text-slate-300 break-all leading-tight"
+                      >{log.message}</span
+                    >
+                  {/if}
+                </div>
+                {#if typeof log.message === "object"}
+                  <div
+                    class="mt-1 border border-black/5 dark:border-white/10 rounded overflow-hidden"
+                  >
+                    <JsonViewer data={log.message} />
+                  </div>
+                {/if}
+              </div>
+            {/each}
+          {/if}
+        </div>
+      </Pane>
+    {:else}
+      <Pane
+        defaultSize={33}
+        minSize={15}
+        class="flex flex-col border-r border-slate-200 dark:border-[#30363d] overflow-hidden"
+      >
+        <div
+          class="h-8 bg-slate-100/50 dark:bg-[#1c2128] border-b border-slate-200 dark:border-[#30363d] flex items-center px-2 shrink-0"
+        >
+          <span
+            class="text-[10px] font-black text-slate-500 uppercase tracking-widest"
+            >Request</span
+          >
+          <div class="flex h-full gap-1 ml-4">
+            <button
+              class="px-2 h-full text-[11px] font-bold {reqTab === 'headers'
+                ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500'
+                : 'text-slate-400'}"
+              onclick={() => (reqTab = "headers")}>Headers</button
+            >
+            <button
+              class="px-2 h-full text-[11px] font-bold {reqTab === 'body'
+                ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500'
+                : 'text-slate-400'}"
+              onclick={() => (reqTab = "body")}>Body</button
+            >
+          </div>
+        </div>
+        <div class="flex-1 overflow-y-auto p-2">
+          {#if reqTab === "headers"}
+            <div class="space-y-0.5">
+              {#each req.headers as [k, v]}
+                <div
+                  class="flex text-[11px] font-mono border-b border-black/5 dark:border-white/5 py-0.5"
+                >
+                  <span
+                    class="w-32 shrink-0 text-indigo-600 dark:text-indigo-400 font-bold truncate"
+                    >{k}</span
+                  >
+                  <span
+                    class="flex-1 text-slate-600 dark:text-slate-300 break-all"
+                    >{v}</span
+                  >
+                </div>
+              {/each}
+            </div>
+          {:else if reqBody === null}
+            <div class="text-slate-400 italic text-[11px]">No body.</div>
+          {:else if typeof reqBody === "object"}
+            <div class="text-xs">
+              <JsonViewer data={reqBody} />
+            </div>
+          {:else}
+            <pre
+              class="text-[11px] font-mono whitespace-pre-wrap break-all">{reqBody}</pre>
+          {/if}
+        </div>
+      </Pane>
+      <PaneResizer
+        class="w-1 bg-transparent hover:bg-indigo-500/30 cursor-col-resize shrink-0 transition-colors"
+      />
+
+      <Pane
+        defaultSize={34}
+        minSize={15}
+        class="flex flex-col border-r border-slate-200 dark:border-[#30363d] overflow-hidden"
+      >
+        <div
+          class="h-8 bg-slate-100/50 dark:bg-[#1c2128] border-b border-slate-200 dark:border-[#30363d] flex items-center justify-between px-2 shrink-0"
+        >
+          <div class="flex items-center h-full">
+            <span
+              class="text-[10px] font-black text-slate-500 uppercase tracking-widest"
+              >Response</span
+            >
+            <div class="flex h-full gap-1 ml-4">
+              <button
+                class="px-2 h-full text-[11px] font-bold {resTab === 'headers'
+                  ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500'
+                  : 'text-slate-400'}"
+                onclick={() => (resTab = "headers")}>Headers</button
+              >
+              <button
+                class="px-2 h-full text-[11px] font-bold {resTab === 'body'
+                  ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500'
+                  : 'text-slate-400'}"
+                onclick={() => (resTab = "body")}>Body</button
+              >
+            </div>
+          </div>
+          {#if res}
+            <span class="text-[11px] font-bold {statusColor(res.status)}"
+              >{res.status}</span
+            >
+          {/if}
+        </div>
+        <div class="flex-1 overflow-y-auto p-2">
+          {#if res}
+            {#if resTab === "headers"}
+              <div class="space-y-0.5">
+                {#each res.headers as [k, v]}
+                  <div
+                    class="flex text-[11px] font-mono border-b border-black/5 dark:border-white/5 py-0.5"
+                  >
+                    <span
+                      class="w-32 shrink-0 text-indigo-600 dark:text-indigo-400 font-bold truncate"
+                      >{k}</span
+                    >
+                    <span
+                      class="flex-1 text-slate-600 dark:text-slate-300 break-all"
+                      >{v}</span
+                    >
+                  </div>
+                {/each}
+              </div>
+            {:else if resBody === null}
+              <div class="text-slate-400 italic text-[11px]">No body.</div>
+            {:else if typeof resBody === "object"}
+              <div class="text-xs">
+                <JsonViewer data={resBody} />
+              </div>
+            {:else}
+              <pre
+                class="text-[11px] font-mono whitespace-pre-wrap break-all">{resBody}</pre>
+            {/if}
+          {:else}
+            <div class="text-slate-400 italic text-[11px] py-4 text-center">
+              Pending...
+            </div>
+          {/if}
+        </div>
+      </Pane>
+      <PaneResizer
+        class="w-1 bg-transparent hover:bg-indigo-500/30 cursor-col-resize shrink-0 transition-colors"
+      />
+
+      <Pane
+        defaultSize={33}
+        minSize={15}
+        class="flex flex-col bg-slate-50/50 dark:bg-black/20 overflow-hidden"
+      >
+        <div
+          class="h-8 bg-slate-100/50 dark:bg-[#1c2128] border-b border-slate-200 dark:border-[#30363d] flex items-center px-2 shrink-0"
+        >
+          <span
+            class="text-[10px] font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest"
+            >Script Logs</span
+          >
+          {#if scriptLogs.length > 0}
+            <span
+              class="ml-2 px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 text-[9px] font-bold"
+              >{scriptLogs.length}</span
+            >
+          {/if}
+        </div>
+        <div class="flex-1 overflow-y-auto p-2 space-y-1.5">
+          {#if scriptLogs.length === 0}
+            <div class="text-slate-400 italic text-[10px] py-10 text-center">
+              No script output.
+            </div>
+          {:else}
+            {#each scriptLogs as log}
+              <div
+                class="flex flex-col border-b border-black/5 dark:border-white/5 pb-1 last:border-0 border-slate-100 dark:border-white/5"
+              >
+                <div class="flex gap-2 items-baseline">
+                  <span class="text-slate-400 shrink-0 text-[10px] font-mono"
+                    >{new Date(log.timestamp)
+                      .toLocaleTimeString()
+                      ?.split(" ")[0]}</span
+                  >
+                  <span
+                    class="font-bold {log.level === 'error'
+                      ? 'text-red-500'
+                      : 'text-indigo-500'} uppercase text-[9px]"
+                  >
+                    {log.level}
+                  </span>
+                  {#if typeof log.message === "string"}
+                    <span
+                      class="text-xs font-mono text-slate-700 dark:text-slate-300 break-all leading-tight"
+                      >{log.message}</span
+                    >
+                  {/if}
+                </div>
+                {#if typeof log.message === "object"}
+                  <div
+                    class="mt-1 border border-black/5 dark:border-white/10 rounded overflow-hidden"
+                  >
+                    <JsonViewer data={log.message} />
+                  </div>
+                {/if}
+              </div>
+            {/each}
+          {/if}
+        </div>
+      </Pane>
+    {/if}
+  </PaneGroup>
 </div>

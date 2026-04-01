@@ -944,6 +944,7 @@ dependencies = [
  "local-ip-address",
  "log",
  "rcgen",
+ "regex",
  "rustls",
  "serde",
  "serde_json",
