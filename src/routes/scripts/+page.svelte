@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { listen } from "@tauri-apps/api/event";
+  import { taurpc } from "$lib/rpc";
   import { ProxyState } from "$lib/proxy.svelte";
   import ScriptPanel from "$lib/components/ScriptPanel.svelte";
 
@@ -14,10 +14,10 @@
     document.documentElement.classList.toggle("dark", prefersDark);
     proxy.init();
 
-    let unlisten: any;
+    let unlisten: (() => void) | undefined;
     (async () => {
-      unlisten = await listen<boolean>("theme-changed", (event) => {
-        document.documentElement.classList.toggle("dark", event.payload);
+      unlisten = await taurpc.events.theme_changed.on((dark) => {
+        document.documentElement.classList.toggle("dark", dark);
       });
     })();
 

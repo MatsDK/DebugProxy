@@ -1,9 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { listen } from "@tauri-apps/api/event";
+  import { taurpc } from "$lib/rpc";
   import { page } from "$app/state";
   import Inspector from "$lib/components/Inspector.svelte";
-  import { invoke } from "@tauri-apps/api/core";
   import type { ProxyEvent } from "$lib/types";
 
   let id = $derived(page.url.searchParams.get("id"));
@@ -13,8 +12,7 @@
   async function loadEvent() {
     if (!id) return;
     try {
-      // Use raw invoke until bindings are updated
-      event = await invoke<ProxyEvent>("get_event_by_id", { id });
+      event = await taurpc.get_event_by_id(id) as any;
       if (!event) {
         error = "Request not found in history cache.";
       }
@@ -31,10 +29,10 @@
     document.documentElement.classList.toggle("dark", prefersDark);
     loadEvent();
 
-    let unlisten: any;
+    let unlisten: (() => void) | undefined;
     (async () => {
-      unlisten = await listen<boolean>("theme-changed", (event) => {
-        document.documentElement.classList.toggle("dark", event.payload);
+      unlisten = await taurpc.events.theme_changed.on((dark) => {
+        document.documentElement.classList.toggle("dark", dark);
       });
     })();
 

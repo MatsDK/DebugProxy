@@ -3,7 +3,7 @@ use std::sync::atomic::Ordering;
 
 use hudsucker::{certificate_authority::RcgenAuthority, Proxy};
 use rcgen::{Issuer, KeyPair};
-use tauri::Runtime;
+use tauri::{EventTarget, Runtime};
 
 use crate::{
     cert::load_or_create_ca,
@@ -14,24 +14,38 @@ use crate::{
 #[taurpc::procedures(export_to = "../src/lib/bindings.ts")]
 pub trait Api {
     async fn get_local_ip() -> Result<String, String>;
-
     async fn is_ssl_intercept_enabled() -> Result<bool, String>;
-
     async fn toggle_ssl_intercept(enabled: bool) -> Result<(), String>;
-
     async fn get_ca_cert() -> Result<Option<String>, String>;
-
     async fn start_proxy<R: Runtime>(port: u16, app_handle: tauri::AppHandle<R>)
         -> Result<(), String>;
-
     async fn stop_proxy() -> Result<(), String>;
     async fn is_blocked() -> Result<bool, String>;
     async fn toggle_blocked(enabled: bool) -> Result<(), String>;
     async fn get_event_by_id(id: String) -> Result<Option<ProxyEvent>, String>;
     async fn open_detached_window(label: String, title: String, url: String) -> Result<(), String>;
-
     async fn get_settings() -> Result<AppSettings, String>;
     async fn save_settings(settings: AppSettings) -> Result<(), String>;
+    async fn broadcast_theme(is_dark: bool) -> Result<(), String>;
+}
+
+#[taurpc::procedures(path = "scripts", export_to = "../src/lib/bindings.ts")]
+pub trait Scripts {
+    async fn set_script_patterns(patterns: Vec<String>) -> Result<(), String>;
+    async fn toggle_scripting(enabled: bool) -> Result<(), String>;
+    async fn submit_script_result(script_id: String, result: ScriptResult) -> Result<(), String>;
+}
+
+#[taurpc::procedures(path = "events", export_to = "../src/lib/bindings.ts", event_trigger = AppEvents)]
+pub trait Events {
+    #[taurpc(event)]
+    async fn proxy_event(event: ProxyEvent);
+
+    #[taurpc(event)]
+    async fn window_closed(label: String);
+
+    #[taurpc(event)]
+    async fn theme_changed(is_dark: bool);
 }
 
 #[derive(Clone)]
@@ -159,11 +173,8 @@ impl Api for ApiImpl {
             let manager = SettingsManager::new(&app);
             manager.save(&settings);
             
-            // Sync specific global settings efficiently:
             self.state.intercept_ssl.store(settings.intercept_ssl, Ordering::Relaxed);
             self.state.is_blocked.store(settings.is_blocked, Ordering::Relaxed);
-            // Updating port and scripts dynamically usually is more complex, but we 
-            // just sync the basic states that are AtomicBool for immediate apply.
             
             Ok(())
         } else {
@@ -195,15 +206,18 @@ impl Api for ApiImpl {
 
         Ok(())
     }
-}
 
-#[taurpc::procedures(path = "scripts", export_to = "../src/lib/bindings.ts")]
-pub trait Scripts {
-    async fn set_script_patterns(patterns: Vec<String>) -> Result<(), String>;
-
-    async fn toggle_scripting(enabled: bool) -> Result<(), String>;
-
-    async fn submit_script_result(script_id: String, result: ScriptResult) -> Result<(), String>;
+    async fn broadcast_theme(self, is_dark: bool) -> Result<(), String> {
+        let handle_opt = self.state.app_handle.lock().unwrap();
+        if let Some(handle) = handle_opt.as_ref() {
+            log::info!("[Events] Broadcasting theme: is_dark={}", is_dark);
+            let trigger = AppEvents::new(handle.clone());
+            let _ = trigger.send_to(EventTarget::any()).theme_changed(is_dark);
+        } else {
+            log::warn!("[Events] Failed to broadcast theme: AppHandle is None");
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
@@ -246,3 +260,9 @@ impl Scripts for ScriptsImpl {
         }
     }
 }
+
+#[derive(Clone)]
+pub struct EventsImpl;
+
+#[taurpc::resolvers]
+impl Events for EventsImpl {}

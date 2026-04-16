@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Runtime};
 use tokio::sync::{oneshot, Mutex};
 
 fn serialize_u64_as_string<S>(val: &u64, serializer: S) -> Result<S::Ok, S::Error>
@@ -161,7 +161,8 @@ impl<R: Runtime> ProxyHandler<R> {
     }
 
     async fn emit_event(&self, event: ProxyEvent) {
-        let _ = self.app_handle.emit("proxy-event", event);
+        let trigger = crate::procs::AppEvents::new(self.app_handle.clone());
+        let _ = trigger.proxy_event(event);
     }
 
     async fn collect_body(body: Body) -> Vec<u8> {

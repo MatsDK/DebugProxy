@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { listen, emit } from "@tauri-apps/api/event";
+  import { taurpc } from "$lib/rpc";
   import { ProxyState } from "$lib/proxy.svelte";
   import Inspector from "$lib/components/Inspector.svelte";
   import ScriptPanel from "$lib/components/ScriptPanel.svelte";
@@ -98,10 +98,15 @@
     isDark = value;
     document.documentElement.classList.toggle("dark", value);
     localStorage.setItem("theme", value ? "dark" : "light");
-    await emit("theme-changed", value);
+    await taurpc.broadcast_theme(value);
   }
 
   onMount(() => {
+    // Listen for theme changes from other windows
+    let unlistenTheme: (() => void) | undefined;
+    // Listen for popped out windows being closed
+    let unlistenWindow: (() => void) | undefined;
+
     (async () => {
       const saved = localStorage.getItem("theme");
       const prefersDark = saved
@@ -109,14 +114,13 @@
         : window.matchMedia("(prefers-color-scheme: dark)").matches;
       setDark(prefersDark);
       await proxy.init();
-    })();
 
-    // Listen for popped out windows being closed (Custom robust event from Rust)
-    let unlisten: (() => void) | undefined;
-    (async () => {
-      unlisten = await listen<string>("window-closed", (event) => {
-        const label = event.payload;
-        
+      unlistenTheme = await taurpc.events.theme_changed.on((dark) => {
+        isDark = dark;
+        document.documentElement.classList.toggle("dark", dark);
+      });
+
+      unlistenWindow = await taurpc.events.window_closed.on((label) => {
         if (label.startsWith("inspector-")) {
           const id = label.replace("inspector-", "");
           windowState.toggleInspector(id, false);
@@ -129,7 +133,8 @@
     const detachKeymap = keymap.attach();
 
     return () => {
-      if (unlisten) unlisten();
+      if (unlistenTheme) unlistenTheme();
+      if (unlistenWindow) unlistenWindow();
       detachKeymap();
     };
   });
@@ -137,10 +142,10 @@
   async function toggleProxy() {
     await proxy.toggleProxy();
   }
+
   async function toggleSsl(val: boolean) {
     try {
       await proxy.toggleSsl(val);
-      await emit("settings-sync", { key: "interceptSsl", value: val });
     } catch (e: any) {
       proxy.errorMsg = "Failed to toggle SSL: " + e;
     }
@@ -149,7 +154,6 @@
   async function toggleBlocked(val: boolean) {
     try {
       await proxy.toggleBlocked(val);
-      await emit("settings-sync", { key: "isBlocked", value: val });
     } catch (e: any) {
       proxy.errorMsg = "Failed to toggle block: " + e;
     }

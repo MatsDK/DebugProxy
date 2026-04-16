@@ -36,7 +36,7 @@ export class ProxyState {
           this.port = payload.port;
           this.interceptSsl = payload.interceptSsl;
           this.isBlocked = payload.isBlocked;
-          
+
           // Hydrate scripts ONLY if deeply changed, to avoid reactivity loops
           if (JSON.stringify(this.scripts.list) !== JSON.stringify(payload.scripts)) {
             this.scripts.hydrate(payload.scripts, true);
@@ -171,7 +171,7 @@ export class ProxyState {
         theme: document.documentElement.classList.contains("dark") ? "dark" : "light",
         scripts: $state.snapshot(this.scripts.list)
       };
-      
+
       // Native fast cross-window synchronization broadcast (ignores source window)
       if (typeof window !== "undefined") {
         localStorage.setItem("proxy_settings_sync", JSON.stringify(payload));
@@ -193,45 +193,51 @@ export class ProxyState {
   }
 
   private async setupListeners() {
-    await listen<ProxyEvent>("proxy-event", async (event) => {
-      const e = event.payload;
-      if (e.body) e.body = new Uint8Array(e.body);
-      const id = String(e.id);
+    await taurpc.events.proxy_event.on(async (e) => {
+      // Map from TauRPC's generated ProxyEvent (number[] body) to our internal ProxyEvent (Uint8Array body)
+      const event: ProxyEvent = {
+        ...e,
+        body: e.body ? new Uint8Array(e.body) : null,
+        headers: e.headers as [string, string][]
+      };
+
+      const id = String(event.id);
 
       // Update maps and times
-      if (!e.is_response) {
-        this.reqMap.set(id, e);
-        this.reqTime.set(id, Number(e.timestamp));
+      if (!event.is_response) {
+        this.reqMap.set(id, event);
+        this.reqTime.set(id, Number(event.timestamp));
         if (!this.idSet.has(id)) {
           this.idSet.add(id);
           this.orderedIds.push(id);
         }
       } else {
-        this.resMap.set(id, e);
-        this.resTime.set(id, Number(e.timestamp));
+        this.resMap.set(id, event);
+        this.resTime.set(id, Number(event.timestamp));
       }
 
-      if (e.script_id !== "0") {
+      if (event.script_id !== "0") {
         try {
-          const result = await this.scripts.runScripts(e, e.is_response);
-          
+          // Use the internal event type for scripts
+          const result = await this.scripts.runScripts(event, event.is_response);
+
           // Update the local event with script modifications so the UI reflects changes
-          if (result.body !== null) e.body = new Uint8Array(result.body);
-          if (result.headers) e.headers = result.headers;
-          if (result.uri) e.uri = result.uri;
-          if (result.status !== undefined && result.status !== null) e.status = result.status;
+          if (result.body !== null) event.body = new Uint8Array(result.body);
+          if (result.headers) event.headers = result.headers;
+          if (result.uri) event.uri = result.uri;
+          if (result.status !== undefined && result.status !== null) event.status = result.status;
 
           // Re-set in map to trigger reactivity if properties were modified
-          if (e.is_response) {
-            this.resMap.set(id, { ...e });
+          if (event.is_response) {
+            this.resMap.set(id, { ...event });
           } else {
-            this.reqMap.set(id, { ...e });
+            this.reqMap.set(id, { ...event });
           }
 
-          await taurpc.scripts.submit_script_result(e.script_id, result);
+          await taurpc.scripts.submit_script_result(event.script_id, result as any);
         } catch (err) {
           console.error(`[Proxy] Script runtime error for event ${id}:`, err);
-          await taurpc.scripts.submit_script_result(e.script_id, {
+          await taurpc.scripts.submit_script_result(event.script_id, {
             dropped: false,
             headers: null,
             uri: null,
