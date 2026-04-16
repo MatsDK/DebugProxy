@@ -1,8 +1,7 @@
 # DebugProxy
 
 A MITM proxy for intercepting and modifying HTTP/HTTPS traffic. 
-
-![Screenshot Placeholder](https://via.placeholder.com/800x450.png?text=Dashboard)
+<img width="1666" height="980" alt="image" src="https://github.com/user-attachments/assets/20804a37-52f5-4c32-8e25-4818dc032f4c" />
 
 ## Features
 
