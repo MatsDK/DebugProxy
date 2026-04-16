@@ -19,6 +19,7 @@
   } from "$lib/utils";
   import ProxyContextMenu from "$lib/components/ProxyContextMenu.svelte";
   import SslBypassModal from "$lib/components/SslBypassModal.svelte";
+  import SettingsDropdown from "$lib/components/SettingsDropdown.svelte";
   const proxy = new ProxyState();
 
   let searchQuery = $state("");
@@ -102,14 +103,6 @@
       );
   });
 
-  let isDark = $state(false);
-  async function setDark(value: boolean) {
-    isDark = value;
-    document.documentElement.classList.toggle("dark", value);
-    localStorage.setItem("theme", value ? "dark" : "light");
-    await taurpc.broadcast_theme(value);
-  }
-
   onMount(() => {
     // Listen for theme changes from other windows
     let unlistenTheme: (() => void) | undefined;
@@ -121,12 +114,11 @@
       const prefersDark = saved
         ? saved === "dark"
         : window.matchMedia("(prefers-color-scheme: dark)").matches;
-      setDark(prefersDark);
+      proxy.setTheme(prefersDark);
       await proxy.init();
 
       unlistenTheme = await taurpc.events.theme_changed.on((dark) => {
-        isDark = dark;
-        document.documentElement.classList.toggle("dark", dark);
+        proxy.setTheme(dark, false);
       });
 
       unlistenWindow = await taurpc.events.window_closed.on((label) => {
@@ -168,17 +160,6 @@
     } catch (e: any) {
       proxy.errorMsg = "Failed to toggle block: " + e;
     }
-  }
-
-  async function exportCert() {
-    const cert = await proxy.exportCert();
-    if (!cert) return;
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(
-      new Blob([cert], { type: "application/x-pem-file" }),
-    );
-    a.download = "debugger_ca.crt";
-    a.click();
   }
 
   const keymap = new Keymap()
@@ -414,81 +395,7 @@
         class="text-[10px] font-bold text-slate-400 bg-slate-100 dark:bg-white/5 px-2 py-0.5 rounded mr-2"
         >Total: {proxy.orderedIds.length}</span
       >
-      <button
-        onclick={exportCert}
-        title="Download Root CA"
-        class="p-1.5 text-slate-500 hover:text-indigo-600 transition-colors"
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          ><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline
-            points="7 10 12 15 17 10"
-          ></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg
-        >
-      </button>
-      <button
-        onclick={() => setDark(!isDark)}
-        title="Toggle Theme"
-        class="p-1.5 text-slate-500 hover:text-amber-500 transition-colors"
-      >
-        {#if isDark}
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            ><circle cx="12" cy="12" r="5"></circle><line
-              x1="12"
-              y1="1"
-              x2="12"
-              y2="3"
-            ></line><line x1="12" y1="21" x2="12" y2="23"></line><line
-              x1="4.22"
-              y1="4.22"
-              x2="5.64"
-              y2="5.64"
-            ></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"
-            ></line><line x1="1" y1="12" x2="3" y2="12"></line><line
-              x1="21"
-              y1="12"
-              x2="23"
-              y2="12"
-            ></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line
-              x1="18.36"
-              y1="5.64"
-              x2="19.78"
-              y2="4.22"
-            ></line></svg
-          >
-        {:else}
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            ><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"
-            ></path></svg
-          >
-        {/if}
-      </button>
+      <SettingsDropdown {proxy} />
     </div>
   </header>
 

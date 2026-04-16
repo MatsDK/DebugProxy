@@ -26,6 +26,10 @@ pub trait Api {
     async fn open_detached_window(label: String, title: String, url: String) -> Result<(), String>;
     async fn get_settings() -> Result<AppSettings, String>;
     async fn save_settings(settings: AppSettings) -> Result<(), String>;
+    async fn import_settings() -> Result<Option<AppSettings>, String>;
+    async fn export_settings(settings: AppSettings) -> Result<(), String>;
+    async fn export_ca_cert() -> Result<(), String>;
+    async fn reset_settings() -> Result<AppSettings, String>;
     async fn broadcast_theme(is_dark: bool) -> Result<(), String>;
 }
 
@@ -207,6 +211,64 @@ impl Api for ApiImpl {
             }
             
             Ok(())
+        } else {
+            Err("AppHandle not initialized".into())
+        }
+    }
+
+    async fn import_settings(self) -> Result<Option<AppSettings>, String> {
+        let file = rfd::AsyncFileDialog::new()
+            .add_filter("JSON", &["json"])
+            .pick_file()
+            .await;
+
+        if let Some(path) = file {
+            let content = std::fs::read_to_string(path.path()).map_err(|e| e.to_string())?;
+            let settings: AppSettings = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+            return Ok(Some(settings));
+        }
+        Ok(None)
+    }
+
+    async fn export_settings(self, settings: AppSettings) -> Result<(), String> {
+        let file = rfd::AsyncFileDialog::new()
+            .add_filter("JSON", &["json"])
+            .set_file_name("settings.json")
+            .save_file()
+            .await;
+
+        if let Some(path) = file {
+            let json = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
+            std::fs::write(path.path(), json).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    async fn export_ca_cert(self) -> Result<(), String> {
+        let cert_opt = self.state.ca_cert_pem.lock().await.clone();
+        if let Some(cert) = cert_opt {
+            let file = rfd::AsyncFileDialog::new()
+                .add_filter("PEM Certificate", &["crt", "pem", "cer"])
+                .set_file_name("debugger_ca.crt")
+                .save_file()
+                .await;
+
+            if let Some(path) = file {
+                std::fs::write(path.path(), cert).map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        } else {
+            Err("CA Certificate not found".into())
+        }
+    }
+
+    async fn reset_settings(self) -> Result<AppSettings, String> {
+        let default = AppSettings::default();
+        let app_handle_opt = self.state.app_handle.lock().unwrap().clone();
+        if let Some(app) = app_handle_opt {
+            let manager = SettingsManager::new(&app);
+            manager.save(&default);
+            Ok(default)
         } else {
             Err("AppHandle not initialized".into())
         }

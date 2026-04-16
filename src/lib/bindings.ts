@@ -17,15 +17,19 @@ export type ScriptConfig = { id: string; name: string; pattern: string; descript
 
 export type ScriptResult = { headers: ([string, string])[] | null; uri: string | null; status: number | null; body: number[] | null; dropped: boolean }
 
-const ARGS_MAP = { '':'{"broadcast_theme":["is_dark"],"get_ca_cert":[],"get_event_by_id":["id"],"get_local_ip":[],"get_settings":[],"is_blocked":[],"is_ssl_intercept_enabled":[],"open_detached_window":["label","title","url"],"save_settings":["settings"],"start_proxy":["port"],"stop_proxy":[],"toggle_blocked":["enabled"],"toggle_ssl_intercept":["enabled"]}', 'events':'{"proxy_event":["event"],"theme_changed":["is_dark"],"window_closed":["label"]}', 'scripts':'{"set_script_patterns":["patterns"],"submit_script_result":["script_id","result"],"toggle_scripting":["enabled"]}' }
+const ARGS_MAP = { '':'{"broadcast_theme":["is_dark"],"export_ca_cert":[],"export_settings":["settings"],"get_ca_cert":[],"get_event_by_id":["id"],"get_local_ip":[],"get_settings":[],"import_settings":[],"is_blocked":[],"is_ssl_intercept_enabled":[],"open_detached_window":["label","title","url"],"reset_settings":[],"save_settings":["settings"],"start_proxy":["port"],"stop_proxy":[],"toggle_blocked":["enabled"],"toggle_ssl_intercept":["enabled"]}', 'events':'{"proxy_event":["event"],"theme_changed":["is_dark"],"window_closed":["label"]}', 'scripts':'{"set_script_patterns":["patterns"],"submit_script_result":["script_id","result"],"toggle_scripting":["enabled"]}' }
 export type Router = { "": {broadcast_theme: (isDark: boolean) => Promise<null>, 
+export_ca_cert: () => Promise<null>, 
+export_settings: (settings: AppSettings) => Promise<null>, 
 get_ca_cert: () => Promise<string | null>, 
 get_event_by_id: (id: string) => Promise<ProxyEvent | null>, 
 get_local_ip: () => Promise<string>, 
 get_settings: () => Promise<AppSettings>, 
+import_settings: () => Promise<AppSettings | null>, 
 is_blocked: () => Promise<boolean>, 
 is_ssl_intercept_enabled: () => Promise<boolean>, 
 open_detached_window: (label: string, title: string, url: string) => Promise<null>, 
+reset_settings: () => Promise<AppSettings>, 
 save_settings: (settings: AppSettings) => Promise<null>, 
 start_proxy: (port: number) => Promise<null>, 
 stop_proxy: () => Promise<null>, 

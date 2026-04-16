@@ -34,6 +34,7 @@ rustls = { version = "0.23.37", features = ["ring"] }
 base64 = "0.22.1"
 regex = "1.10"
 flate2 = "1"
+rfd = "0.15"
 
 taurpc = "0.7.1"
 

@@ -10,6 +10,7 @@ export class ProxyState {
   errorMsg = $state("");
   interceptSsl = $state(true);
   isBlocked = $state(false);
+  isDark = $state(false);
   sslBypassHosts = $state<string[]>([]);
 
   reqMap = new SvelteMap<string, ProxyEvent>();
@@ -172,6 +173,21 @@ export class ProxyState {
     }
   }
 
+  async setTheme(dark: boolean, broadcast = true) {
+    if (this.isDark === dark) return;
+    
+    this.isDark = dark;
+    if (typeof document !== "undefined") {
+      document.documentElement.classList.toggle("dark", dark);
+      localStorage.setItem("theme", dark ? "dark" : "light");
+    }
+    
+    if (broadcast) {
+      await taurpc.broadcast_theme(dark);
+      await this.saveSettings();
+    }
+  }
+
   async saveSettings() {
     this.port = Number(this.port);
     try {
@@ -180,7 +196,7 @@ export class ProxyState {
         interceptSsl: this.interceptSsl,
         isBlocked: this.isBlocked,
         sslBypassHosts: $state.snapshot(this.sslBypassHosts),
-        theme: document.documentElement.classList.contains("dark") ? "dark" : "light",
+        theme: this.isDark ? "dark" : "light",
         scripts: $state.snapshot(this.scripts.list),
         scriptsEnabled: this.scripts.enabled
       };
