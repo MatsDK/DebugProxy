@@ -15,11 +15,12 @@
     ExternalLink,
     Shield,
   } from "lucide-svelte";
-  import Toggle from "./Toggle.svelte";
+  import SslSettingsModal from "./SslSettingsModal.svelte";
 
   let { proxy }: { proxy: ProxyState } = $props();
 
   let isOpen = $state(false);
+  let isSslSettingsOpen = $state(false);
   let el = $state<HTMLElement | null>(null);
 
   function toggle() {
@@ -50,7 +51,7 @@
         port: proxy.port,
         interceptSsl: proxy.interceptSsl,
         isBlocked: proxy.isBlocked,
-        sslBypassHosts: $state.snapshot(proxy.sslBypassHosts),
+        sslExceptionPatterns: $state.snapshot(proxy.sslExceptionPatterns),
         theme: proxy.isDark ? "dark" : "light",
         scripts: $state.snapshot(proxy.scripts.list),
         scriptsEnabled: proxy.scripts.enabled,
@@ -71,7 +72,7 @@
         proxy.port = settings.port;
         proxy.interceptSsl = settings.interceptSsl;
         proxy.isBlocked = settings.isBlocked;
-        proxy.sslBypassHosts = settings.sslBypassHosts;
+        proxy.sslExceptionPatterns = settings.sslExceptionPatterns;
         proxy.scripts.hydrate(settings.scripts, settings.scriptsEnabled);
 
         await proxy.setTheme(settings.theme === "dark");
@@ -96,7 +97,7 @@
       proxy.port = settings.port;
       proxy.interceptSsl = settings.interceptSsl;
       proxy.isBlocked = settings.isBlocked;
-      proxy.sslBypassHosts = settings.sslBypassHosts;
+      proxy.sslExceptionPatterns = settings.sslExceptionPatterns;
       proxy.scripts.hydrate(settings.scripts, settings.scriptsEnabled);
 
       await proxy.setTheme(settings.theme === "dark");
@@ -133,14 +134,14 @@
   >
     <Settings
       size={14}
-      class={isOpen
-        ? "rotate-90 transition-transform duration-300"
-        : "transition-transform duration-300"}
+      class="shrink-0 {isOpen
+        ? 'rotate-90'
+        : ''} transition-transform duration-300"
     />
     <span>Settings</span>
     <ChevronDown
       size={12}
-      class="opacity-50 {isOpen
+      class="opacity-50 shrink-0 {isOpen
         ? 'rotate-180'
         : ''} transition-transform duration-200"
     />
@@ -205,6 +206,20 @@
           <span
             class="text-[11px] font-medium text-slate-600 dark:text-slate-300"
             >Clear Traffic</span
+          >
+        </button>
+
+        <button
+          onclick={() => {
+            isSslSettingsOpen = true;
+            close();
+          }}
+          class="w-full flex items-center gap-2 px-2 py-1.5 text-left hover:bg-slate-50 dark:hover:bg-white/5 rounded transition-colors group"
+        >
+          <Shield size={14} class="text-slate-400 group-hover:text-amber-500" />
+          <span
+            class="text-[11px] font-medium text-slate-600 dark:text-slate-300"
+            >SSL Settings</span
           >
         </button>
 
@@ -280,3 +295,9 @@
     </div>
   {/if}
 </div>
+
+<SslSettingsModal
+  {proxy}
+  isOpen={isSslSettingsOpen}
+  onClose={() => (isSslSettingsOpen = false)}
+/>

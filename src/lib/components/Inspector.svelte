@@ -153,17 +153,21 @@
               >
               <div class="flex h-full gap-1 ml-4">
                 <button
-                  class="px-2 h-full text-xs font-bold {reqTab === 'headers'
+                  class="px-2 h-full text-xs font-bold transition-all {reqTab === 'headers'
                     ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500'
                     : 'text-slate-400'}"
-                  onclick={() => (reqTab = "headers")}>Headers</button
+                  onclick={() => (reqTab = "headers")}
                 >
+                  <span class="translate-y-[0.5px]">Headers</span>
+                </button>
                 <button
-                  class="px-2 h-full text-xs font-bold {reqTab === 'body'
+                  class="px-2 h-full text-xs font-bold transition-all {reqTab === 'body'
                     ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500'
                     : 'text-slate-400'}"
-                  onclick={() => (reqTab = "body")}>Body</button
+                  onclick={() => (reqTab = "body")}
                 >
+                  <span class="translate-y-[0.5px]">Body</span>
+                </button>
               </div>
             </div>
             <div class="flex-1 overflow-y-auto p-2">
@@ -214,18 +218,22 @@
                 >
                 <div class="flex h-full gap-1 ml-4">
                   <button
-                    class="px-2 h-full text-xs font-bold {resTab ===
+                    class="px-2 h-full text-xs font-bold transition-all {resTab ===
                     'headers'
                       ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500'
                       : 'text-slate-400'}"
-                    onclick={() => (resTab = "headers")}>Headers</button
+                    onclick={() => (resTab = "headers")}
                   >
+                   <span>Headers</span>
+                  </button>
                   <button
-                    class="px-2 h-full text-xs font-bold {resTab === 'body'
+                    class="px-2 h-full text-xs font-bold transition-all {resTab === 'body'
                       ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500'
                       : 'text-slate-400'}"
-                    onclick={() => (resTab = "body")}>Body</button
+                    onclick={() => (resTab = "body")}
                   >
+                   <span>Body</span>
+                  </button>
                 </div>
               </div>
               {#if res}

@@ -24,3 +24,25 @@
   --color-accent: #6366f1;
   --color-accent-dark: #818cf8;
 }
+
+@layer base {
+  /* 
+   * Global Optical Baseline Correction
+   * Fixes alignment issues where text appears slightly too high in centered flex containers.
+   * Applying leading-none reduces the Em box to the font size, allowing items-center 
+   * to align more accurately with geometric elements like icons and toggles.
+   */
+  .items-center > span:not(.no-nudge),
+  .items-center > label:not(.no-nudge),
+  .items-center > button:not(.no-nudge) {
+    @apply leading-none;
+    /* Optical nudge for system fonts on Linux/Windows */
+    transform: translateY(0.5px);
+  }
+
+  /* Ensure inputs and other inline elements also follow this rule if centered */
+  .items-center > input[type="text"],
+  .items-center > select {
+    @apply leading-none;
+  }
+}

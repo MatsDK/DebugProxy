@@ -55,16 +55,23 @@ pub struct ProxyState {
     pub port: Arc<Mutex<Option<u16>>>,
     pub proxy_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     pub intercept_ssl: Arc<AtomicBool>,
+    /// Channel to trigger graceful shutdown of the proxy server
     pub shutdown_signal: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+    /// Monotonic counter for assigning unique IDs to every intercepted request
     pub next_id: Arc<AtomicU64>,
+    /// Counter for generating unique IDs for script execution contexts
     pub next_script_id: Arc<AtomicU64>,
     pub scripting_enabled: Arc<AtomicBool>,
+    /// Registry of pending script results, keyed by execution ID
     pub script_pending: Arc<Mutex<HashMap<u64, oneshot::Sender<ScriptResult>>>>,
+    /// Compiled regex patterns used to determine which requests trigger scripts
     pub script_patterns: Arc<std::sync::RwLock<Vec<Regex>>>,
     pub is_blocked: Arc<AtomicBool>,
+    /// In-memory cache of recent traffic for detached inspector windows
     pub history: Arc<Mutex<HashMap<String, ProxyEvent>>>,
     pub app_handle: Arc<std::sync::Mutex<Option<AppHandle>>>,
-    pub ssl_bypass_patterns: Arc<std::sync::RwLock<Vec<Regex>>>,
+    /// Patterns for hosts that should bypass SSL decryption
+    pub ssl_exception_patterns: Arc<std::sync::RwLock<Vec<Regex>>>,
 }
 
 impl Default for ProxyState {
@@ -84,24 +91,17 @@ impl Default for ProxyState {
             is_blocked: Arc::new(AtomicBool::new(false)),
             history: Arc::new(Mutex::new(HashMap::new())),
             app_handle: Arc::new(std::sync::Mutex::new(None)),
-            ssl_bypass_patterns: Arc::new(std::sync::RwLock::new(Vec::new())),
+            ssl_exception_patterns: Arc::new(std::sync::RwLock::new(Vec::new())),
         }
     }
 }
 
 pub struct ProxyHandler<R: Runtime> {
     app_handle: AppHandle<R>,
-    intercept_ssl: Arc<AtomicBool>,
-    is_running: Arc<AtomicBool>,
-    next_id: Arc<AtomicU64>,
-    next_script_id: Arc<AtomicU64>,
-    scripting_enabled: Arc<AtomicBool>,
-    script_pending: Arc<Mutex<HashMap<u64, oneshot::Sender<ScriptResult>>>>,
-    script_patterns: Arc<std::sync::RwLock<Vec<Regex>>>,
-    is_blocked: Arc<AtomicBool>,
-    history: Arc<Mutex<HashMap<String, ProxyEvent>>>,
-    ca_cert_pem: String,
-    ssl_bypass_patterns: Arc<std::sync::RwLock<Vec<Regex>>>,
+    state: ProxyState,
+    /// Cached CA cert for this session to avoid repeated mutex locking
+    ca_cert_pem_cache: String,
+    // Fields for current request context
     request_id: Option<u64>,
     request_timestamp: Option<u64>,
     request_method: Option<String>,
@@ -112,17 +112,8 @@ impl<R: Runtime> Clone for ProxyHandler<R> {
     fn clone(&self) -> Self {
         Self {
             app_handle: self.app_handle.clone(),
-            intercept_ssl: self.intercept_ssl.clone(),
-            is_running: self.is_running.clone(),
-            next_id: self.next_id.clone(),
-            next_script_id: self.next_script_id.clone(),
-            scripting_enabled: self.scripting_enabled.clone(),
-            script_pending: self.script_pending.clone(),
-            script_patterns: self.script_patterns.clone(),
-            is_blocked: self.is_blocked.clone(),
-            history: self.history.clone(),
-            ca_cert_pem: self.ca_cert_pem.clone(),
-            ssl_bypass_patterns: self.ssl_bypass_patterns.clone(),
+            state: self.state.clone(),
+            ca_cert_pem_cache: self.ca_cert_pem_cache.clone(),
             request_id: None,
             request_timestamp: None,
             request_method: None,
@@ -134,31 +125,13 @@ impl<R: Runtime> Clone for ProxyHandler<R> {
 impl<R: Runtime> ProxyHandler<R> {
     pub fn new(
         app_handle: AppHandle<R>,
-        intercept_ssl: Arc<AtomicBool>,
-        is_running: Arc<AtomicBool>,
-        next_id: Arc<AtomicU64>,
-        next_script_id: Arc<AtomicU64>,
-        scripting_enabled: Arc<AtomicBool>,
-        script_pending: Arc<Mutex<HashMap<u64, oneshot::Sender<ScriptResult>>>>,
-        script_patterns: Arc<std::sync::RwLock<Vec<Regex>>>,
-        is_blocked: Arc<AtomicBool>,
-        history: Arc<Mutex<HashMap<String, ProxyEvent>>>,
-        ca_cert_pem: String,
-        ssl_bypass_patterns: Arc<std::sync::RwLock<Vec<Regex>>>,
+        state: ProxyState,
+        ca_cert_pem_cache: String,
     ) -> Self {
         Self {
             app_handle,
-            intercept_ssl,
-            is_running,
-            next_id,
-            next_script_id,
-            scripting_enabled,
-            script_pending,
-            script_patterns,
-            is_blocked,
-            history,
-            ca_cert_pem,
-            ssl_bypass_patterns,
+            state,
+            ca_cert_pem_cache,
             request_id: None,
             request_timestamp: None,
             request_method: None,
@@ -216,7 +189,7 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
         _ctx: &HttpContext,
         req: Request<Body>,
     ) -> RequestOrResponse {
-        if self.is_blocked.load(Ordering::Relaxed) {
+        if self.state.is_blocked.load(Ordering::Relaxed) {
             // Simulating BLOCKED: Dropping request
             return RequestOrResponse::Response(
                 Response::builder()
@@ -226,7 +199,7 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
             );
         }
 
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let id = self.state.next_id.fetch_add(1, Ordering::Relaxed);
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -251,7 +224,7 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
                     .status(StatusCode::OK)
                     .header("Content-Type", "application/x-x509-ca-cert")
                     .header("Content-Disposition", "attachment; filename=debug_proxy_ca.crt")
-                    .body(Body::from(self.ca_cert_pem.clone()))
+                    .body(Body::from(self.ca_cert_pem_cache.clone()))
                     .unwrap(),
             );
         }
@@ -274,7 +247,7 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
 
             // Cache in history
             {
-                let mut history = self.history.lock().await;
+                let mut history = self.state.history.lock().await;
                 history.insert(id.to_string(), event.clone());
             }
 
@@ -311,7 +284,7 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
 
         // Cache in history for detached windows
         {
-            let mut history: tokio::sync::MutexGuard<HashMap<String, ProxyEvent>> = self.history.lock().await;
+            let mut history: tokio::sync::MutexGuard<HashMap<String, ProxyEvent>> = self.state.history.lock().await;
             history.insert(id.to_string(), event.clone());
             if history.len() > 1000 {
                 let keys: Vec<String> = history.keys().cloned().collect();
@@ -325,8 +298,8 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
         self.emit_event(event).await;
 
         let (scripting_enabled, pattern_match, _pattern_count) = {
-            let scripting_enabled = self.scripting_enabled.load(Ordering::Relaxed);
-            let patterns = self.script_patterns.read().unwrap();
+            let scripting_enabled = self.state.scripting_enabled.load(Ordering::Relaxed);
+            let patterns = self.state.script_patterns.read().unwrap();
             let mut matched = false;
             if scripting_enabled && method != "CONNECT" {
                 for re in patterns.iter() {
@@ -344,7 +317,7 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
         let should_script = scripting_enabled && pattern_match && method != "CONNECT";
 
         let script_id = if should_script {
-            let sid = self.next_script_id.fetch_add(1, Ordering::Relaxed);
+            let sid = self.state.next_script_id.fetch_add(1, Ordering::Relaxed);
             sid
         } else {
             0
@@ -364,7 +337,7 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
 
         if should_script {
             let (tx, rx) = oneshot::channel();
-            self.script_pending.lock().await.insert(script_id, tx);
+            self.state.script_pending.lock().await.insert(script_id, tx);
             self.emit_event(event).await;
 
             match rx.await {
@@ -478,17 +451,17 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
             Some(decompressed)
         };
 
-        let should_script = self.scripting_enabled.load(Ordering::Relaxed) && self.request_method.as_deref() != Some("CONNECT") && {
-            let patterns = self.script_patterns.read().unwrap();
+        let should_script = self.state.scripting_enabled.load(Ordering::Relaxed) && self.request_method.as_deref() != Some("CONNECT") && {
+            let patterns = self.state.script_patterns.read().unwrap();
             let matched = patterns.iter().any(|re| re.is_match(&uri));
-            if self.scripting_enabled.load(Ordering::Relaxed) && self.request_method.as_deref() != Some("CONNECT") {
+            if self.state.scripting_enabled.load(Ordering::Relaxed) && self.request_method.as_deref() != Some("CONNECT") {
                  // Logging removed for performance
             }
             matched
         };
 
         let script_id = if should_script {
-            self.next_script_id.fetch_add(1, Ordering::Relaxed)
+            self.state.next_script_id.fetch_add(1, Ordering::Relaxed)
         } else {
             0
         };
@@ -507,7 +480,7 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
 
         if should_script {
             let (tx, rx) = oneshot::channel();
-            self.script_pending.lock().await.insert(script_id, tx);
+            self.state.script_pending.lock().await.insert(script_id, tx);
             self.emit_event(event).await;
 
             match rx.await {
@@ -557,7 +530,7 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
         } else {
                     // Update history
                     {
-                        let mut history: tokio::sync::MutexGuard<HashMap<String, ProxyEvent>> = self.history.lock().await;
+                        let mut history: tokio::sync::MutexGuard<HashMap<String, ProxyEvent>> = self.state.history.lock().await;
                         history.insert(id.to_string(), event.clone());
                     }
 
@@ -567,7 +540,7 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
     }
 
     async fn should_intercept(&mut self, _ctx: &HttpContext, req: &Request<Body>) -> bool {
-        if !self.intercept_ssl.load(Ordering::Relaxed) {
+        if !self.state.intercept_ssl.load(Ordering::Relaxed) {
             return false;
         }
 
@@ -581,7 +554,7 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
             .unwrap_or_default();
 
         if !host.is_empty() {
-            let patterns = self.ssl_bypass_patterns.read().unwrap();
+            let patterns = self.state.ssl_exception_patterns.read().unwrap();
             for re in patterns.iter() {
                 if re.is_match(host) {
                     log::info!("[Proxy] Bypassing SSL for host: {}", host);

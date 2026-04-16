@@ -98,9 +98,9 @@ impl Api for ApiImpl {
         {
             let manager = SettingsManager::new(&app_handle);
             let settings = manager.load();
-            let mut bypass = self.state.ssl_bypass_patterns.write().unwrap();
+            let mut bypass = self.state.ssl_exception_patterns.write().unwrap();
             let mut next = Vec::new();
-            for p in settings.ssl_bypass_hosts {
+            for p in settings.ssl_exception_patterns {
                 let re_str = wildcard_to_regex(&p);
                 if let Ok(re) = regex::RegexBuilder::new(&re_str).case_insensitive(true).build() {
                     next.push(re);
@@ -111,17 +111,8 @@ impl Api for ApiImpl {
 
         let handler = ProxyHandler::new(
             app_handle.clone(),
-            self.state.intercept_ssl.clone(),
-            self.state.is_running.clone(),
-            self.state.next_id.clone(),
-            self.state.next_script_id.clone(),
-            self.state.scripting_enabled.clone(),
-            self.state.script_pending.clone(),
-            self.state.script_patterns.clone(),
-            self.state.is_blocked.clone(),
-            self.state.history.clone(),
+            self.state.clone(),
             cert_pem.clone(),
-            self.state.ssl_bypass_patterns.clone(),
         );
 
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
@@ -197,17 +188,17 @@ impl Api for ApiImpl {
             self.state.intercept_ssl.store(settings.intercept_ssl, Ordering::Relaxed);
             self.state.is_blocked.store(settings.is_blocked, Ordering::Relaxed);
 
-            // Update SSL bypass patterns
+            // Update SSL exception patterns
             {
-                let mut bypass = self.state.ssl_bypass_patterns.write().unwrap();
+                let mut patterns = self.state.ssl_exception_patterns.write().unwrap();
                 let mut next = Vec::new();
-                for p in settings.ssl_bypass_hosts {
+                for p in settings.ssl_exception_patterns {
                     let re_str = wildcard_to_regex(&p);
                     if let Ok(re) = regex::RegexBuilder::new(&re_str).case_insensitive(true).build() {
                         next.push(re);
                     }
                 }
-                *bypass = next;
+                *patterns = next;
             }
             
             Ok(())

@@ -18,7 +18,6 @@
     formatDuration,
   } from "$lib/utils";
   import ProxyContextMenu from "$lib/components/ProxyContextMenu.svelte";
-  import SslBypassModal from "$lib/components/SslBypassModal.svelte";
   import SettingsDropdown from "$lib/components/SettingsDropdown.svelte";
   const proxy = new ProxyState();
 
@@ -84,11 +83,12 @@
     if (scrollTop < 100 && displayLimit < filteredIds.length) {
       const oldHeight = scrollHeight;
       displayLimit = Math.min(filteredIds.length, displayLimit + 200);
-      
+
       // Preserve relative scroll position after the DOM updates
       setTimeout(() => {
         if (requestList) {
-          requestList.scrollTop = requestList.scrollHeight - oldHeight + scrollTop;
+          requestList.scrollTop =
+            requestList.scrollHeight - oldHeight + scrollTop;
         }
       }, 0);
     }
@@ -139,8 +139,6 @@
       detachKeymap();
     };
   });
-
-  let isSslBypassOpen = $state(false);
 
   async function toggleProxy() {
     await proxy.toggleProxy();
@@ -328,7 +326,7 @@
         <input
           bind:value={proxy.port}
           disabled={proxy.isRunning}
-          class="w-10 bg-transparent border-none p-0 text-[13px] font-mono font-bold focus:ring-0 text-slate-700 dark:text-slate-200 h-auto -translate-y-[0.5px]"
+          class="w-10 bg-transparent border-none p-0 text-[13px] font-mono font-bold focus:ring-0 text-slate-700 dark:text-slate-200 h-auto"
         />
       </div>
 
@@ -342,26 +340,6 @@
           label="SSL"
           size="sm"
         />
-        <button
-          onclick={() => (isSslBypassOpen = true)}
-          class="ml-1 p-1 text-slate-400 hover:text-indigo-500 transition-colors"
-          title="SSL Bypass Settings"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            ><path
-              d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
-            /><circle cx="12" cy="12" r="3" /></svg
-          >
-        </button>
       </div>
 
       <!-- Block Section -->
@@ -380,21 +358,17 @@
       <div class="px-1.5 flex items-center justify-center">
         <button
           onclick={toggleProxy}
-          class="px-4 h-[22px] text-[11px] pt-1 font-black tracking-wider rounded-full transition-all shrink-0 flex items-center justify-center {proxy.isRunning
+          class="px-4 h-[22px] text-[11px] font-black tracking-wider rounded-full transition-all shrink-0 flex items-center justify-center {proxy.isRunning
             ? 'bg-red-500 text-white hover:bg-red-600 shadow-sm shadow-red-500/20'
             : 'bg-emerald-500 text-white hover:bg-emerald-600 shadow-sm shadow-emerald-500/20'}"
         >
-          {proxy.isRunning ? "STOP" : "START"}
+          <span>{proxy.isRunning ? "STOP" : "START"}</span>
         </button>
       </div>
     </div>
 
     <!-- Utils -->
     <div class="flex items-center gap-1 shrink-0 font-sans">
-      <span
-        class="text-[10px] font-bold text-slate-400 bg-slate-100 dark:bg-white/5 px-2 py-0.5 rounded mr-2"
-        >Total: {proxy.orderedIds.length}</span
-      >
       <SettingsDropdown {proxy} />
     </div>
   </header>
@@ -468,14 +442,21 @@
                 {/each}
               </div>
               <div class="flex-1"></div>
+
+              <span
+                class="text-[10px] font-bold text-slate-400 bg-slate-100 dark:bg-white/5 px-2 py-0.5 rounded mr-2"
+                >Total: {proxy.orderedIds.length}</span
+              >
+
               <button
                 onclick={() => {
                   proxy.clearTraffic();
                   displayLimit = 200;
                 }}
-                class="px-2 py-1 text-xs font-medium rounded border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-[#21262d] transition-colors"
-                >Clear</button
+                class="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-200/50 dark:hover:bg-white/5 rounded-md transition-all active:scale-95 border border-transparent hover:border-slate-200 dark:hover:border-white/10"
               >
+                Clear
+              </button>
             </div>
 
             <div
@@ -513,7 +494,10 @@
                       ? 'bg-indigo-50 dark:bg-[#1f2a3a] outline outline-1 -outline-offset-1 outline-indigo-400'
                       : ''}"
                     onclick={() => (selectedId = id)}
+                    onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (selectedId = id)}
                     oncontextmenu={(e) => openCtxMenu(e, id)}
+                    role="button"
+                    tabindex="0"
                   >
                     <div
                       class="w-14 shrink-0 font-semibold {statusColor(
@@ -659,9 +643,3 @@
     onClose={closeCtxMenu}
   />
 {/if}
-
-<SslBypassModal
-  {proxy}
-  isOpen={isSslBypassOpen}
-  onClose={() => (isSslBypassOpen = false)}
-/>

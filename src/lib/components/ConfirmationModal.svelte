@@ -33,14 +33,20 @@
   class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 dark:bg-black/60 backdrop-blur-[2px]"
   transition:fade={{ duration: 150 }}
   onclick={onCancel}
+  onkeydown={(e) => e.key === 'Escape' && onCancel()}
+  role="button"
+  tabindex="-1"
+  aria-label="Close modal"
 >
   <!-- Modal Card -->
   <div 
     class="w-full max-w-sm bg-white dark:bg-[#161b22] rounded-xl shadow-2xl border border-slate-200 dark:border-white/10 overflow-hidden"
     transition:scale={{ duration: 150, start: 0.98 }}
     onclick={(e) => e.stopPropagation()}
+    onkeydown={undefined}
     role="dialog"
     aria-modal="true"
+    tabindex="-1"
   >
     <div class="p-6">
       <div class="flex items-center gap-4 mb-4">

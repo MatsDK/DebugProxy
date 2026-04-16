@@ -9,20 +9,20 @@
   import { taurpc } from "$lib/rpc";
   import { Trash2, Plus } from "lucide-svelte";
 
-  type Props = { scripts: ScriptsState };
-  let { scripts }: Props = $props();
+  import type { ScriptConfig } from "$lib/types";
+  let { scripts } = $props<{ scripts: ScriptsState }>();
 
   let selectedId = $state<string | null>(null);
   let selected = $derived(
-    scripts.list.find((s) => s.id === selectedId) || null,
+    scripts.list.find((s: ScriptConfig) => s.id === selectedId) || null,
   );
 
   let searchTerm = $state("");
   let filteredScripts = $derived(
     scripts.list.filter(
-      (s) =>
+      (s: any) =>
         s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        s.filters.some((f) =>
+        s.filters.some((f: any) =>
           f.filterHost.toLowerCase().includes(searchTerm.toLowerCase()),
         ),
     ),
@@ -56,7 +56,7 @@
   let scriptToDelete = $state<any | null>(null);
 
   function removeScript(id: string) {
-    const script = scripts.list.find((s) => s.id === id);
+    const script = (scripts.list as any[]).find((s) => s.id === id);
     if (script) scriptToDelete = script;
   }
 
@@ -122,7 +122,7 @@
 
   let selectedFilterId = $state<string | null>(null);
   let activeFilter = $derived(
-    selected?.filters.find((f) => f.id === selectedFilterId) ||
+    selected?.filters.find((f: any) => f.id === selectedFilterId) ||
       selected?.filters[0] ||
       null,
   );
@@ -132,7 +132,7 @@
     if (selected) {
       if (
         !selectedFilterId ||
-        !selected.filters.some((f) => f.id === selectedFilterId)
+        !selected.filters.some((f: any) => f.id === selectedFilterId)
       ) {
         selectedFilterId = selected.filters[0]?.id || null;
       }
@@ -158,7 +158,7 @@
 
   function removeFilter(filterId: string) {
     if (selected && selected.filters.length > 1) {
-      selected.filters = selected.filters.filter((f) => f.id !== filterId);
+      selected.filters = selected.filters.filter((f: any) => f.id !== filterId);
       if (selectedFilterId === filterId) {
         selectedFilterId = selected.filters[0].id;
       }
@@ -410,11 +410,11 @@
           <!-- Filters Section -->
           <div class="space-y-4">
             <div class="flex items-center justify-between">
-              <label
+              <span
                 class="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider"
               >
                 Patterns ({selected.filters.length})
-              </label>
+              </span>
               <button
                 onclick={addFilter}
                 class="text-xs flex items-center gap-1 px-2 py-1 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded hover:bg-indigo-100 dark:hover:bg-indigo-800/40 border border-indigo-200 dark:border-indigo-800/50 transition-colors font-bold"
@@ -580,11 +580,11 @@
 
           <!-- Compiled Pattern Preview -->
           <div class="space-y-1.5">
-            <label
+            <span
               class="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider"
             >
               Compiled Matching Regex
-            </label>
+            </span>
             <div
               class="p-2 bg-slate-100 dark:bg-[#0d1117] border border-slate-200 dark:border-[#30363d] rounded font-mono text-[9px] text-slate-500 dark:text-slate-400 break-all leading-tight"
             >
@@ -847,8 +847,5 @@ if (req.url.hostname.includes(
   .custom-scrollbar::-webkit-scrollbar-thumb {
     background: #cbd5e1;
     border-radius: 10px;
-  }
-  .dark .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: #334155;
   }
 </style>

@@ -38,7 +38,7 @@ pub struct AppSettings {
     pub is_blocked: bool,
     pub theme: String,
     pub scripts: Vec<ScriptConfig>,
-    pub ssl_bypass_hosts: Vec<String>,
+    pub ssl_exception_patterns: Vec<String>,
     pub scripts_enabled: bool,
 }
 
@@ -50,7 +50,7 @@ impl Default for AppSettings {
             is_blocked: false,
             theme: "light".to_string(),
             scripts: vec![],
-            ssl_bypass_hosts: vec!["*.apple.com".to_string()],
+            ssl_exception_patterns: vec!["*.apple.com".to_string()],
             scripts_enabled: true,
         }
     }

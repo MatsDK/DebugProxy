@@ -11,7 +11,7 @@ export class ProxyState {
   interceptSsl = $state(true);
   isBlocked = $state(false);
   isDark = $state(false);
-  sslBypassHosts = $state<string[]>([]);
+  sslExceptionPatterns = $state<string[]>([]);
 
   reqMap = new SvelteMap<string, ProxyEvent>();
   resMap = new SvelteMap<string, ProxyEvent>();
@@ -35,7 +35,7 @@ export class ProxyState {
           this.port = payload.port;
           this.interceptSsl = payload.interceptSsl;
           this.isBlocked = payload.isBlocked;
-          this.sslBypassHosts = payload.sslBypassHosts || [];
+          this.sslExceptionPatterns = payload.sslExceptionPatterns || [];
 
           // Hydrate scripts ONLY if deeply changed, to avoid reactivity loops
           if (JSON.stringify(this.scripts.list) !== JSON.stringify(payload.scripts) || this.scripts.enabled !== payload.scriptsEnabled) {
@@ -69,7 +69,7 @@ export class ProxyState {
       this.port = settings.port;
       this.interceptSsl = settings.interceptSsl;
       this.isBlocked = settings.isBlocked;
-      this.sslBypassHosts = settings.sslBypassHosts;
+      this.sslExceptionPatterns = settings.sslExceptionPatterns;
       this.scripts.hydrate(settings.scripts, settings.scriptsEnabled ?? true);
     } catch (e) {
       console.error("[Proxy] Failed to load settings:", e);
@@ -153,14 +153,14 @@ export class ProxyState {
     }
   }
 
-  async addSslBypassHost(host: string) {
-    if (!host || this.sslBypassHosts.includes(host)) return;
-    this.sslBypassHosts.push(host);
+  async addSslExceptionPattern(pattern: string) {
+    if (!pattern || this.sslExceptionPatterns.includes(pattern)) return;
+    this.sslExceptionPatterns.push(pattern);
     await this.saveSettings();
   }
 
-  async removeSslBypassHost(host: string) {
-    this.sslBypassHosts = this.sslBypassHosts.filter(h => h !== host);
+  async removeSslExceptionPattern(pattern: string) {
+    this.sslExceptionPatterns = this.sslExceptionPatterns.filter(p => p !== pattern);
     await this.saveSettings();
   }
 
@@ -195,7 +195,7 @@ export class ProxyState {
         port: this.port,
         interceptSsl: this.interceptSsl,
         isBlocked: this.isBlocked,
-        sslBypassHosts: $state.snapshot(this.sslBypassHosts),
+        sslExceptionPatterns: $state.snapshot(this.sslExceptionPatterns),
         theme: this.isDark ? "dark" : "light",
         scripts: $state.snapshot(this.scripts.list),
         scriptsEnabled: this.scripts.enabled
