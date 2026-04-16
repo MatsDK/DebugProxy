@@ -64,6 +64,7 @@ pub struct ProxyState {
     pub is_blocked: Arc<AtomicBool>,
     pub history: Arc<Mutex<HashMap<String, ProxyEvent>>>,
     pub app_handle: Arc<std::sync::Mutex<Option<AppHandle>>>,
+    pub ssl_bypass_patterns: Arc<std::sync::RwLock<Vec<Regex>>>,
 }
 
 impl Default for ProxyState {
@@ -83,6 +84,7 @@ impl Default for ProxyState {
             is_blocked: Arc::new(AtomicBool::new(false)),
             history: Arc::new(Mutex::new(HashMap::new())),
             app_handle: Arc::new(std::sync::Mutex::new(None)),
+            ssl_bypass_patterns: Arc::new(std::sync::RwLock::new(Vec::new())),
         }
     }
 }
@@ -99,6 +101,7 @@ pub struct ProxyHandler<R: Runtime> {
     is_blocked: Arc<AtomicBool>,
     history: Arc<Mutex<HashMap<String, ProxyEvent>>>,
     ca_cert_pem: String,
+    ssl_bypass_patterns: Arc<std::sync::RwLock<Vec<Regex>>>,
     request_id: Option<u64>,
     request_timestamp: Option<u64>,
     request_method: Option<String>,
@@ -119,6 +122,7 @@ impl<R: Runtime> Clone for ProxyHandler<R> {
             is_blocked: self.is_blocked.clone(),
             history: self.history.clone(),
             ca_cert_pem: self.ca_cert_pem.clone(),
+            ssl_bypass_patterns: self.ssl_bypass_patterns.clone(),
             request_id: None,
             request_timestamp: None,
             request_method: None,
@@ -140,6 +144,7 @@ impl<R: Runtime> ProxyHandler<R> {
         is_blocked: Arc<AtomicBool>,
         history: Arc<Mutex<HashMap<String, ProxyEvent>>>,
         ca_cert_pem: String,
+        ssl_bypass_patterns: Arc<std::sync::RwLock<Vec<Regex>>>,
     ) -> Self {
         Self {
             app_handle,
@@ -153,6 +158,7 @@ impl<R: Runtime> ProxyHandler<R> {
             is_blocked,
             history,
             ca_cert_pem,
+            ssl_bypass_patterns,
             request_id: None,
             request_timestamp: None,
             request_method: None,
@@ -305,13 +311,13 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
 
         // Cache in history for detached windows
         {
-            let mut history = self.history.lock().await;
+            let mut history: tokio::sync::MutexGuard<HashMap<String, ProxyEvent>> = self.history.lock().await;
             history.insert(id.to_string(), event.clone());
             if history.len() > 1000 {
                 let keys: Vec<String> = history.keys().cloned().collect();
                 if let Some(min_key) = keys.iter().min() {
-                    let min_key = min_key.clone();
-                    history.remove(&min_key);
+                    let min_key_str: String = min_key.clone();
+                    history.remove(&min_key_str);
                 }
             }
         }
@@ -551,7 +557,7 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
         } else {
                     // Update history
                     {
-                        let mut history = self.history.lock().await;
+                        let mut history: tokio::sync::MutexGuard<HashMap<String, ProxyEvent>> = self.history.lock().await;
                         history.insert(id.to_string(), event.clone());
                     }
 
@@ -560,8 +566,30 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
         }
     }
 
-    async fn should_intercept(&mut self, _ctx: &HttpContext, _req: &Request<Body>) -> bool {
-        let enable = self.intercept_ssl.load(Ordering::Relaxed);
-        enable
+    async fn should_intercept(&mut self, _ctx: &HttpContext, req: &Request<Body>) -> bool {
+        if !self.intercept_ssl.load(Ordering::Relaxed) {
+            return false;
+        }
+
+        let host = req.uri().host()
+            .or_else(|| {
+                req.headers()
+                    .get(hudsucker::hyper::header::HOST)
+                    .and_then(|h| h.to_str().ok())
+                    .and_then(|h| h.split(':').next())
+            })
+            .unwrap_or_default();
+
+        if !host.is_empty() {
+            let patterns = self.ssl_bypass_patterns.read().unwrap();
+            for re in patterns.iter() {
+                if re.is_match(host) {
+                    log::info!("[Proxy] Bypassing SSL for host: {}", host);
+                    return false;
+                }
+            }
+        }
+
+        true
     }
 }

@@ -30,14 +30,14 @@
 
 <!-- Backdrop -->
 <div 
-  class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 dark:bg-black/60 backdrop-blur-[2px] antialiased"
+  class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 dark:bg-black/60 backdrop-blur-[2px]"
   transition:fade={{ duration: 150 }}
   onclick={onCancel}
 >
   <!-- Modal Card -->
   <div 
-    class="w-full max-w-sm bg-white dark:bg-[#161b22] rounded-xl shadow-2xl border border-slate-200 dark:border-white/10 overflow-hidden transform"
-    transition:scale={{ duration: 200, start: 0.95 }}
+    class="w-full max-w-sm bg-white dark:bg-[#161b22] rounded-xl shadow-2xl border border-slate-200 dark:border-white/10 overflow-hidden"
+    transition:scale={{ duration: 150, start: 0.98 }}
     onclick={(e) => e.stopPropagation()}
     role="dialog"
     aria-modal="true"

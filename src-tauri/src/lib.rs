@@ -37,7 +37,16 @@ pub async fn run() {
         );
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_log::Builder::new().build())
+        .plugin(tauri_plugin_log::Builder::new()
+            .level(log::LevelFilter::Info)
+            .level_for("hudsucker", log::LevelFilter::Off)
+            .level_for("hyper", log::LevelFilter::Off)
+            .level_for("h2", log::LevelFilter::Off)
+            .level_for("rustls", log::LevelFilter::Off)
+            .level_for("tokio_util", log::LevelFilter::Off)
+            .level_for("tokio_graceful", log::LevelFilter::Off)
+            .level_for("tracing", log::LevelFilter::Off)
+            .build())
         .plugin(tauri_plugin_opener::init())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

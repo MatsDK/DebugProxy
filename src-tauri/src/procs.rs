@@ -3,7 +3,7 @@ use std::sync::atomic::Ordering;
 
 use hudsucker::{certificate_authority::RcgenAuthority, Proxy};
 use rcgen::{Issuer, KeyPair};
-use tauri::{EventTarget, Runtime};
+use tauri::Runtime;
 
 use crate::{
     cert::load_or_create_ca,
@@ -89,6 +89,22 @@ impl Api for ApiImpl {
             Issuer::from_ca_cert_pem(&cert_pem, key_pair_parsed).map_err(|e| e.to_string())?;
 
         let ca = RcgenAuthority::new(issuer, 1_000, rustls::crypto::ring::default_provider());
+
+        // Initialize SSL bypass patterns from settings
+        {
+            let manager = SettingsManager::new(&app_handle);
+            let settings = manager.load();
+            let mut bypass = self.state.ssl_bypass_patterns.write().unwrap();
+            let mut next = Vec::new();
+            for p in settings.ssl_bypass_hosts {
+                let re_str = wildcard_to_regex(&p);
+                if let Ok(re) = regex::RegexBuilder::new(&re_str).case_insensitive(true).build() {
+                    next.push(re);
+                }
+            }
+            *bypass = next;
+        }
+
         let handler = ProxyHandler::new(
             app_handle.clone(),
             self.state.intercept_ssl.clone(),
@@ -101,6 +117,7 @@ impl Api for ApiImpl {
             self.state.is_blocked.clone(),
             self.state.history.clone(),
             cert_pem.clone(),
+            self.state.ssl_bypass_patterns.clone(),
         );
 
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
@@ -175,6 +192,19 @@ impl Api for ApiImpl {
             
             self.state.intercept_ssl.store(settings.intercept_ssl, Ordering::Relaxed);
             self.state.is_blocked.store(settings.is_blocked, Ordering::Relaxed);
+
+            // Update SSL bypass patterns
+            {
+                let mut bypass = self.state.ssl_bypass_patterns.write().unwrap();
+                let mut next = Vec::new();
+                for p in settings.ssl_bypass_hosts {
+                    let re_str = wildcard_to_regex(&p);
+                    if let Ok(re) = regex::RegexBuilder::new(&re_str).case_insensitive(true).build() {
+                        next.push(re);
+                    }
+                }
+                *bypass = next;
+            }
             
             Ok(())
         } else {
@@ -212,7 +242,7 @@ impl Api for ApiImpl {
         if let Some(handle) = handle_opt.as_ref() {
             log::info!("[Events] Broadcasting theme: is_dark={}", is_dark);
             let trigger = AppEvents::new(handle.clone());
-            let _ = trigger.send_to(EventTarget::any()).theme_changed(is_dark);
+            let _ = trigger.theme_changed(is_dark);
         } else {
             log::warn!("[Events] Failed to broadcast theme: AppHandle is None");
         }
@@ -258,6 +288,17 @@ impl Scripts for ScriptsImpl {
         } else {
             Err("Request ID not found or already timed out".into())
         }
+    }
+}
+
+fn wildcard_to_regex(pattern: &str) -> String {
+    if pattern.contains('*') || pattern.contains('?') {
+        let mut escaped = regex::escape(pattern);
+        escaped = escaped.replace("\\*", ".*");
+        escaped = escaped.replace("\\?", ".");
+        format!("^{}$", escaped)
+    } else {
+        pattern.to_string()
     }
 }
 

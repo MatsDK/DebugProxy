@@ -16,7 +16,8 @@ export class ScriptsState {
   private patterns = new Map<string, RegExp>();
   private proxy: ProxyState;
   private compilationTimeout: any;
-  private syncStatusResetTimeout: any;
+  private toastDebounce: any;
+  private lastHydrateTime = Date.now();
 
   constructor(proxy: ProxyState) {
     this.proxy = proxy;
@@ -28,17 +29,40 @@ export class ScriptsState {
       const isScriptingEnabled = this.enabled;
 
       clearTimeout(this.compilationTimeout);
-      this.compilationTimeout = setTimeout(() => {
-        this.compileAll();
+      this.compilationTimeout = setTimeout(async () => {
+        this.syncStatus = "saving";
+        try {
+          await this.compileAll();
 
-        const deps = this.list.map(s => ({ id: s.id, code: s.code, enabled: s.enabled, pattern: s.pattern }));
-        this.syncBackend(isScriptingEnabled, deps);
-        this.proxy.saveSettings();
-      }, 300);
+          const deps = this.list.map(s => ({ id: s.id, code: s.code, enabled: s.enabled, pattern: s.pattern }));
+          await this.syncBackend(isScriptingEnabled, deps);
+          await this.proxy.saveSettings();
+
+          this.syncStatus = "saved";
+
+          // Debounce the success toast so it doesn't spam during active typing.
+          clearTimeout(this.toastDebounce);
+
+          const isInitial = Date.now() - this.lastHydrateTime < 2000;
+          if (isInitial) {
+            if (this.syncStatus === "saved") this.syncStatus = "idle";
+          } else {
+            this.toastDebounce = setTimeout(() => {
+              toast.success("Script Saved");
+              // Reset status after toast shows (or just keep it saved until next edit)
+              if (this.syncStatus === "saved") this.syncStatus = "idle";
+            }, 300);
+          }
+        } catch (e) {
+          console.error("[Scripts] Sync effect failed:", e);
+          this.syncStatus = "error";
+        }
+      }, 800);
     });
   }
 
   hydrate(scripts: ScriptConfig[], enabled: boolean) {
+    this.lastHydrateTime = Date.now();
     this.list = scripts;
     this.enabled = enabled;
   }
@@ -95,6 +119,7 @@ export class ScriptsState {
     } catch (e: any) {
       console.error("[Scripts] Failed to sync with backend:", e);
       toast.error("Proxy sync failed");
+      throw e;
     }
   }
 
@@ -447,7 +472,24 @@ export class ScriptsState {
         filterPath: "",
         filterQuery: ""
       }],
-      code: `export async function onRequest(req, proxy) {
+      code: DEFAULT_SCRIPT,
+      enabled: false,
+      pattern: ".*",
+      description: "",
+      compileError: undefined,
+    });
+  }
+
+  removeScript(id: string) {
+    this.list = this.list.filter(s => s.id !== id);
+    this.modules.delete(id);
+    this.patterns.delete(id);
+    const url = this.urls.get(id);
+    if (url) { URL.revokeObjectURL(url); this.urls.delete(id); }
+  }
+}
+
+const DEFAULT_SCRIPT = `export async function onRequest(req, proxy) {
   // ── URL & Headers ──
   // proxy.log(req.url.hostname);
   // req.url.searchParams.set("debug", "true");
@@ -471,19 +513,4 @@ export async function onResponse(res, proxy) {
   // res.status = 200;
   // if (res.json) res.json.injected = true;
   // proxy.log(res.contentType);
-}`,
-      enabled: false,
-      pattern: ".*",
-      description: "",
-      compileError: undefined,
-    });
-  }
-
-  removeScript(id: string) {
-    this.list = this.list.filter(s => s.id !== id);
-    this.modules.delete(id);
-    this.patterns.delete(id);
-    const url = this.urls.get(id);
-    if (url) { URL.revokeObjectURL(url); this.urls.delete(id); }
-  }
-}
+}`

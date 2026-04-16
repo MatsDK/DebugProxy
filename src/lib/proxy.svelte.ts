@@ -1,5 +1,4 @@
 import { SvelteMap } from "svelte/reactivity";
-import { listen } from "@tauri-apps/api/event";
 import { taurpc } from "./rpc";
 import type { ProxyEvent, ScriptLog } from "$lib/types";
 import { ScriptsState } from "./scripts.svelte";
@@ -11,6 +10,7 @@ export class ProxyState {
   errorMsg = $state("");
   interceptSsl = $state(true);
   isBlocked = $state(false);
+  sslBypassHosts = $state<string[]>([]);
 
   reqMap = new SvelteMap<string, ProxyEvent>();
   resMap = new SvelteMap<string, ProxyEvent>();
@@ -26,8 +26,6 @@ export class ProxyState {
   constructor() {
     this.scripts = new ScriptsState(this);
 
-    this.scripts = new ScriptsState(this);
-
     // Cross-window synchronization (local browser broadcast)
     if (typeof window !== "undefined") {
       window.addEventListener("storage", (e) => {
@@ -36,10 +34,11 @@ export class ProxyState {
           this.port = payload.port;
           this.interceptSsl = payload.interceptSsl;
           this.isBlocked = payload.isBlocked;
+          this.sslBypassHosts = payload.sslBypassHosts || [];
 
           // Hydrate scripts ONLY if deeply changed, to avoid reactivity loops
-          if (JSON.stringify(this.scripts.list) !== JSON.stringify(payload.scripts)) {
-            this.scripts.hydrate(payload.scripts, true);
+          if (JSON.stringify(this.scripts.list) !== JSON.stringify(payload.scripts) || this.scripts.enabled !== payload.scriptsEnabled) {
+            this.scripts.hydrate(payload.scripts, payload.scriptsEnabled ?? true);
           }
         }
       });
@@ -69,7 +68,8 @@ export class ProxyState {
       this.port = settings.port;
       this.interceptSsl = settings.interceptSsl;
       this.isBlocked = settings.isBlocked;
-      this.scripts.hydrate(settings.scripts, true);
+      this.sslBypassHosts = settings.sslBypassHosts;
+      this.scripts.hydrate(settings.scripts, settings.scriptsEnabled ?? true);
     } catch (e) {
       console.error("[Proxy] Failed to load settings:", e);
     }
@@ -152,6 +152,17 @@ export class ProxyState {
     }
   }
 
+  async addSslBypassHost(host: string) {
+    if (!host || this.sslBypassHosts.includes(host)) return;
+    this.sslBypassHosts.push(host);
+    await this.saveSettings();
+  }
+
+  async removeSslBypassHost(host: string) {
+    this.sslBypassHosts = this.sslBypassHosts.filter(h => h !== host);
+    await this.saveSettings();
+  }
+
   async exportCert(): Promise<string | null> {
     try {
       return await taurpc.get_ca_cert();
@@ -168,8 +179,10 @@ export class ProxyState {
         port: this.port,
         interceptSsl: this.interceptSsl,
         isBlocked: this.isBlocked,
+        sslBypassHosts: $state.snapshot(this.sslBypassHosts),
         theme: document.documentElement.classList.contains("dark") ? "dark" : "light",
-        scripts: $state.snapshot(this.scripts.list)
+        scripts: $state.snapshot(this.scripts.list),
+        scriptsEnabled: this.scripts.enabled
       };
 
       // Native fast cross-window synchronization broadcast (ignores source window)
