@@ -1,0 +1,131 @@
+
+> debug_proxy@0.1.0 check /home/matsdk/Programming/proxy
+> svelte-kit sync && svelte-check --tsconfig ./tsconfig.json
+
+Loading svelte-check in workspace: /home/matsdk/Programming/proxy
+Getting Svelte diagnostics...
+
+/home/matsdk/Programming/proxy/src/lib/proxy.svelte.ts:143:11
+Error: Operator '>' cannot be applied to types 'string' and 'number'. 
+
+      if (e.script_id > 0) {
+        try {
+
+/home/matsdk/Programming/proxy/src/lib/components/ScriptPanel.svelte:102:13
+Warn: Visible, non-interactive elements with a click event must be accompanied by a keyboard event handler. Consider whether an interactive element such as `<button type="button">` or `<a>` might be more appropriate
+https://svelte.dev/e/a11y_click_events_have_key_events (svelte)
+            >
+            <div
+              onclick={(e) => {
+                e.stopPropagation();
+                removeScript(script.id);
+              }}
+              class="opacity-0 group-hover:opacity-100 p-0.5 hover:text-red-500 dark:hover:text-red-400 text-slate-400 dark:text-slate-500 transition-all"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                ><path d="M3 6h18"></path><path
+                  d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"
+                ></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+                ></path></svg
+              >
+            </div>
+          </div>
+
+/home/matsdk/Programming/proxy/src/lib/components/ScriptPanel.svelte:102:13
+Warn: `<div>` with a click handler must have an ARIA role
+https://svelte.dev/e/a11y_no_static_element_interactions (svelte)
+            >
+            <div
+              onclick={(e) => {
+                e.stopPropagation();
+                removeScript(script.id);
+              }}
+              class="opacity-0 group-hover:opacity-100 p-0.5 hover:text-red-500 dark:hover:text-red-400 text-slate-400 dark:text-slate-500 transition-all"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                ><path d="M3 6h18"></path><path
+                  d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"
+                ></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"
+                ></path></svg
+              >
+            </div>
+          </div>
+
+/home/matsdk/Programming/proxy/src/lib/components/ScriptPanel.svelte:138:11
+Warn: A form label must be associated with a control
+https://svelte.dev/e/a11y_label_has_associated_control (svelte)
+        <div class="flex-1 flex flex-col gap-1">
+          <label
+            class="text-[9px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500"
+            >Script Name</label
+          >
+          <input
+
+/home/matsdk/Programming/proxy/src/lib/components/ScriptPanel.svelte:149:11
+Warn: A form label must be associated with a control
+https://svelte.dev/e/a11y_label_has_associated_control (svelte)
+        <div class="flex-1 flex flex-col gap-1">
+          <label
+            class="text-[9px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500"
+            >URL Pattern (Regex)</label
+          >
+          <input
+
+/home/matsdk/Programming/proxy/src/routes/+page.svelte:254:17
+Warn: Visible, non-interactive elements with a click event must be accompanied by a keyboard event handler. Consider whether an interactive element such as `<button type="button">` or `<a>` might be more appropriate
+https://svelte.dev/e/a11y_click_events_have_key_events (svelte)
+              {#if req}
+                <div class="flex items-center px-2 py-1.5 text-xs cursor-pointer border-b border-black/5 dark:border-white/5 hover:bg-slate-50 dark:hover:bg-[#1f2a3a] transition-colors {selectedId === id ? 'bg-indigo-50 dark:bg-[#1f2a3a] outline outline-1 -outline-offset-1 outline-indigo-400' : ''}" data-id={id} onclick={() => (selectedId = id)} oncontextmenu={(e) => openCtxMenu(e, id)}>
+                  <div class="w-14 shrink-0 font-semibold {statusColor(res?.status ?? null)}">{res?.status || "..."}</div>
+                  <div class="w-16 shrink-0 font-mono font-black {methodColor(req.method)}">{req.method}</div>
+                  <div class="w-56 shrink-0 truncate text-slate-500 dark:text-slate-400">{domainOnly(req.uri)}</div>
+                  <div class="flex-1 min-w-0 truncate font-mono font-medium">{pathOnly(req.uri)}</div>
+                  <div class="w-20 shrink-0 text-right font-mono text-slate-400">{formatTime(proxy.reqTime.get(id))}</div>
+                  <div class="w-16 shrink-0 text-right text-slate-400">{formatDuration(id)}</div>
+                  <div class="w-14 shrink-0 text-right text-slate-400">{res ? formatSize(res.body_base64) : "–"}</div>
+                </div>
+              {/if}
+
+/home/matsdk/Programming/proxy/src/routes/+page.svelte:254:17
+Warn: `<div>` with a click or contextmenu handler must have an ARIA role
+https://svelte.dev/e/a11y_no_static_element_interactions (svelte)
+              {#if req}
+                <div class="flex items-center px-2 py-1.5 text-xs cursor-pointer border-b border-black/5 dark:border-white/5 hover:bg-slate-50 dark:hover:bg-[#1f2a3a] transition-colors {selectedId === id ? 'bg-indigo-50 dark:bg-[#1f2a3a] outline outline-1 -outline-offset-1 outline-indigo-400' : ''}" data-id={id} onclick={() => (selectedId = id)} oncontextmenu={(e) => openCtxMenu(e, id)}>
+                  <div class="w-14 shrink-0 font-semibold {statusColor(res?.status ?? null)}">{res?.status || "..."}</div>
+                  <div class="w-16 shrink-0 font-mono font-black {methodColor(req.method)}">{req.method}</div>
+                  <div class="w-56 shrink-0 truncate text-slate-500 dark:text-slate-400">{domainOnly(req.uri)}</div>
+                  <div class="flex-1 min-w-0 truncate font-mono font-medium">{pathOnly(req.uri)}</div>
+                  <div class="w-20 shrink-0 text-right font-mono text-slate-400">{formatTime(proxy.reqTime.get(id))}</div>
+                  <div class="w-16 shrink-0 text-right text-slate-400">{formatDuration(id)}</div>
+                  <div class="w-14 shrink-0 text-right text-slate-400">{res ? formatSize(res.body_base64) : "–"}</div>
+                </div>
+              {/if}
+
+/home/matsdk/Programming/proxy/src/routes/+page.svelte:268:9
+Warn: `<div>` with a mousedown handler must have an ARIA role
+https://svelte.dev/e/a11y_no_static_element_interactions (svelte)
+
+        <div class="h-1 bg-transparent hover:bg-indigo-500/20 cursor-row-resize transition-colors shrink-0" onmousedown={() => (isResizingHeight = true)}></div>
+        <div class="shrink-0 flex flex-col min-h-0 bg-white dark:bg-[#0d1117]" style="height: {inspectorHeight}px">
+
+====================================
+svelte-check found 1 error and 7 warnings in 3 files
+ ELIFECYCLE  Command failed with exit code 1.

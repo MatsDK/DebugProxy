@@ -4,7 +4,7 @@ use tauri::{AppHandle, Manager, Runtime};
 fn ca_paths<R: Runtime>(app: &AppHandle<R>) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-    Ok((data_dir.join("ca.crt"), data_dir.join("ca.key")))
+    Ok((data_dir.join("ca_v2.crt"), data_dir.join("ca_v2.key")))
 }
 
 pub fn load_or_create_ca<R: Runtime>(app: &AppHandle<R>) -> Result<(String, String), String> {
@@ -18,7 +18,7 @@ pub fn load_or_create_ca<R: Runtime>(app: &AppHandle<R>) -> Result<(String, Stri
         }
     }
 
-    let mut params = CertificateParams::new(Vec::<String>::new()).unwrap();
+    let mut params = CertificateParams::new(vec!["proxy.local".to_string()]).unwrap();
     let mut dn = hudsucker::rcgen::DistinguishedName::new();
     dn.push(hudsucker::rcgen::DnType::CommonName, "Debug Proxy Root CA");
     dn.push(hudsucker::rcgen::DnType::OrganizationName, "MDK");
@@ -29,6 +29,9 @@ pub fn load_or_create_ca<R: Runtime>(app: &AppHandle<R>) -> Result<(String, Stri
         hudsucker::rcgen::KeyUsagePurpose::DigitalSignature,
         hudsucker::rcgen::KeyUsagePurpose::CrlSign,
     ];
+    // Set validity to 10 years for long-term stability
+    params.not_before = hudsucker::rcgen::date_time_ymd(2025, 1, 1);
+    params.not_after = hudsucker::rcgen::date_time_ymd(2035, 1, 1);
 
     let key_pair = KeyPair::generate_for(&hudsucker::rcgen::PKCS_ECDSA_P256_SHA256)
         .map_err(|e| e.to_string())?;

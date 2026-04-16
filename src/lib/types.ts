@@ -1,36 +1,38 @@
 export type ProxyEvent = {
-  id: number;
-  script_id: number;
-  timestamp: number;
+  id: string;
+  script_id: string;
+  timestamp: string;
   method: string;
   uri: string;
   headers: [string, string][];
   is_response: boolean;
   status: number | null;
-  body_base64: string | null;
+  body: Uint8Array | null;
+  
+  // Script helpers
+  json?: any;
 };
 
 export type ScriptResult = {
   headers?: [string, string][];
-  body_base64?: string;
-  status?: number;
-  uri?: string;
+  body?: number[] | null;
+  status?: number | null;
+  uri?: string | null;
   dropped: boolean;
+  
+  // Script helpers
+  json?: any;
 };
 
-export type ScriptConfig = {
-  id: string;
-  name: string;
-  pattern: string; // Regex string
-  code: string;
-  enabled: boolean;
-  compileError?: string;
-};
+export type { FilterConfig, ScriptConfig } from "./bindings";
 
 export type ScriptLog = {
   id: string; // Unique log ID
-  requestId: number; // The request this log belongs to
+  requestId: string; // The request this log belongs to
   message: any;
   level: "info" | "error" | "warn";
   timestamp: number;
 };
+
+export type CtxMenu = { x: number; y: number; id: string } | null;
+

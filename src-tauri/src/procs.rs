@@ -7,7 +7,8 @@ use tauri::Runtime;
 
 use crate::{
     cert::load_or_create_ca,
-    proxy::{ProxyHandler, ProxyState, ScriptResult},
+    proxy::{ProxyEvent, ProxyHandler, ProxyState, ScriptResult},
+    settings::{AppSettings, SettingsManager},
 };
 
 #[taurpc::procedures(export_to = "../src/lib/bindings.ts")]
@@ -24,6 +25,13 @@ pub trait Api {
         -> Result<(), String>;
 
     async fn stop_proxy() -> Result<(), String>;
+    async fn is_blocked() -> Result<bool, String>;
+    async fn toggle_blocked(enabled: bool) -> Result<(), String>;
+    async fn get_event_by_id(id: String) -> Result<Option<ProxyEvent>, String>;
+    async fn open_detached_window(label: String, title: String, url: String) -> Result<(), String>;
+
+    async fn get_settings() -> Result<AppSettings, String>;
+    async fn save_settings(settings: AppSettings) -> Result<(), String>;
 }
 
 #[derive(Clone)]
@@ -31,7 +39,7 @@ pub struct ApiImpl {
     pub state: ProxyState,
 }
 
-#[taurpc::resolvers(export = "../src/lib/bindings.ts")]
+#[taurpc::resolvers]
 impl Api for ApiImpl {
     async fn get_local_ip(self) -> Result<String, String> {
         local_ip_address::local_ip()
@@ -76,6 +84,8 @@ impl Api for ApiImpl {
             self.state.scripting_enabled.clone(),
             self.state.script_pending.clone(),
             self.state.script_patterns.clone(),
+            self.state.is_blocked.clone(),
+            self.state.history.clone(),
             cert_pem.clone(),
         );
 
@@ -123,6 +133,68 @@ impl Api for ApiImpl {
         }
         Err("Proxy is not running".into())
     }
+
+    async fn is_blocked(self) -> Result<bool, String> {
+        Ok(self.state.is_blocked.load(Ordering::Relaxed))
+    }
+
+    async fn toggle_blocked(self, enabled: bool) -> Result<(), String> {
+        self.state.is_blocked.store(enabled, Ordering::Relaxed);
+        Ok(())
+    }
+
+    async fn get_settings(self) -> Result<AppSettings, String> {
+        let app_handle_opt = self.state.app_handle.lock().unwrap().clone();
+        if let Some(app) = app_handle_opt {
+            let manager = SettingsManager::new(&app);
+            Ok(manager.load())
+        } else {
+            Err("AppHandle not initialized".into())
+        }
+    }
+
+    async fn save_settings(self, settings: AppSettings) -> Result<(), String> {
+        let app_handle_opt = self.state.app_handle.lock().unwrap().clone();
+        if let Some(app) = app_handle_opt {
+            let manager = SettingsManager::new(&app);
+            manager.save(&settings);
+            
+            // Sync specific global settings efficiently:
+            self.state.intercept_ssl.store(settings.intercept_ssl, Ordering::Relaxed);
+            self.state.is_blocked.store(settings.is_blocked, Ordering::Relaxed);
+            // Updating port and scripts dynamically usually is more complex, but we 
+            // just sync the basic states that are AtomicBool for immediate apply.
+            
+            Ok(())
+        } else {
+            Err("AppHandle not initialized".into())
+        }
+    }
+
+    async fn get_event_by_id(self, id: String) -> Result<Option<ProxyEvent>, String> {
+        let history = self.state.history.lock().await;
+        Ok(history.get(&id).cloned())
+    }
+
+    async fn open_detached_window(
+        self,
+        label: String,
+        title: String,
+        url: String,
+    ) -> Result<(), String> {
+        let handle_opt = self.state.app_handle.lock().unwrap();
+        let handle = handle_opt
+            .as_ref()
+            .ok_or("App handle not initialized")?;
+
+        let _window = tauri::WebviewWindowBuilder::new(handle, label, tauri::WebviewUrl::App(url.into()))
+            .title(title)
+            .inner_size(800.0, 600.0)
+            .build()
+            .map_err(|e| e.to_string())?;
+
+        Ok(())
+    }
 }
 
 #[taurpc::procedures(path = "scripts", export_to = "../src/lib/bindings.ts")]
@@ -131,7 +203,7 @@ pub trait Scripts {
 
     async fn toggle_scripting(enabled: bool) -> Result<(), String>;
 
-    async fn submit_script_result(script_id: u64, result: ScriptResult) -> Result<(), String>;
+    async fn submit_script_result(script_id: String, result: ScriptResult) -> Result<(), String>;
 }
 
 #[derive(Clone)]
@@ -161,11 +233,12 @@ impl Scripts for ScriptsImpl {
 
     async fn submit_script_result(
         self,
-        script_id: u64,
+        script_id: String,
         result: ScriptResult,
     ) -> Result<(), String> {
+        let id_u64: u64 = script_id.parse().map_err(|e| format!("Invalid script_id: {}", e))?;
         let mut pending = self.state.script_pending.lock().await;
-        if let Some(tx) = pending.remove(&script_id) {
+        if let Some(tx) = pending.remove(&id_u64) {
             let _ = tx.send(result);
             Ok(())
         } else {

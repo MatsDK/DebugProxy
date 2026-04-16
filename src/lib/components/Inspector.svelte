@@ -2,6 +2,8 @@
   import type { ProxyEvent, ScriptLog } from "$lib/types";
   import JsonViewer from "./JsonViewer.svelte";
   import { PaneGroup, Pane, PaneResizer } from "paneforge";
+  import { taurpc } from "$lib/rpc";
+  import { windowState } from "$lib/window.svelte";
 
   let {
     req,
@@ -13,7 +15,7 @@
   let resTab = $state<"headers" | "body">("headers");
 
   $effect(() => {
-    if (req && req.body_base64) {
+    if (req && req.body) {
       reqTab = "body";
     } else {
       reqTab = "headers";
@@ -21,7 +23,7 @@
   });
 
   $effect(() => {
-    if (res && res.body_base64) {
+    if (res && res.body) {
       resTab = "body";
     } else {
       resTab = "headers";
@@ -48,18 +50,37 @@
     );
   }
 
-  function formatBodyStr(b64: string | null): any {
-    if (!b64) return null;
-    const str = atob(b64);
+  async function popOut() {
+    windowState.toggleInspector(req.id, true);
+    await taurpc.open_detached_window(
+      `inspector-${req.id}`,
+      `Inspector - ${req.method} ${req.uri}`,
+      `/inspector?id=${req.id}`,
+    );
+  }
+
+  function formatBodyStr(data: Uint8Array | number[] | null): any {
+    if (!data) return null;
+    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+    if (bytes.length === 0) return null;
+    
     try {
-      return JSON.parse(str);
-    } catch {
+      // Direct decode, then attempt JSON parse
+      const str = new TextDecoder().decode(bytes);
+      try {
+        const trimmed = str.trim();
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+          return JSON.parse(str);
+        }
+      } catch {}
       return str;
+    } catch {
+      return "[Binary Data]";
     }
   }
 
-  let reqBody = $derived(formatBodyStr(req.body_base64));
-  let resBody = $derived(res ? formatBodyStr(res.body_base64) : null);
+  let reqBody = $derived(formatBodyStr(req.body));
+  let resBody = $derived(res ? formatBodyStr(res.body) : null);
 
   // Container width observer
   let containerWidth = $state(0);
@@ -83,6 +104,29 @@
       class="font-mono text-xs text-slate-500 dark:text-slate-400 truncate select-all"
       >{req.uri}</span
     >
+    <div class="ml-auto flex items-center">
+      <button
+        onclick={popOut}
+        class="p-1 hover:bg-slate-200 dark:hover:bg-white/10 rounded transition-colors"
+        title="Pop out into new window"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="text-slate-500 dark:text-slate-400"
+          ><path d="M15 3h6v6" /><path d="M10 14 21 3" /><path
+            d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"
+          /></svg
+        >
+      </button>
+    </div>
   </div>
 
   <PaneGroup
@@ -104,18 +148,18 @@
               class="h-8 bg-slate-100/50 dark:bg-[#1c2128] border-b border-slate-200 dark:border-[#30363d] flex items-center px-2 shrink-0"
             >
               <span
-                class="text-[10px] font-black text-slate-500 uppercase tracking-widest"
+                class="text-xs font-black text-slate-500 uppercase tracking-widest"
                 >Request</span
               >
               <div class="flex h-full gap-1 ml-4">
                 <button
-                  class="px-2 h-full text-[11px] font-bold {reqTab === 'headers'
+                  class="px-2 h-full text-xs font-bold {reqTab === 'headers'
                     ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500'
                     : 'text-slate-400'}"
                   onclick={() => (reqTab = "headers")}>Headers</button
                 >
                 <button
-                  class="px-2 h-full text-[11px] font-bold {reqTab === 'body'
+                  class="px-2 h-full text-xs font-bold {reqTab === 'body'
                     ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500'
                     : 'text-slate-400'}"
                   onclick={() => (reqTab = "body")}>Body</button
@@ -127,7 +171,7 @@
                 <div class="space-y-0.5">
                   {#each req.headers as [k, v]}
                     <div
-                      class="flex text-[11px] font-mono border-b border-black/5 dark:border-white/5 py-0.5"
+                      class="flex text-xs font-mono border-b border-black/5 dark:border-white/5 py-0.5"
                     >
                       <span
                         class="w-32 shrink-0 text-indigo-600 dark:text-indigo-400 font-bold truncate"
@@ -165,19 +209,19 @@
             >
               <div class="flex items-center h-full">
                 <span
-                  class="text-[10px] font-black text-slate-500 uppercase tracking-widest"
+                  class="text-xs font-black text-slate-500 uppercase tracking-widest"
                   >Response</span
                 >
                 <div class="flex h-full gap-1 ml-4">
                   <button
-                    class="px-2 h-full text-[11px] font-bold {resTab ===
+                    class="px-2 h-full text-xs font-bold {resTab ===
                     'headers'
                       ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500'
                       : 'text-slate-400'}"
                     onclick={() => (resTab = "headers")}>Headers</button
                   >
                   <button
-                    class="px-2 h-full text-[11px] font-bold {resTab === 'body'
+                    class="px-2 h-full text-xs font-bold {resTab === 'body'
                       ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500'
                       : 'text-slate-400'}"
                     onclick={() => (resTab = "body")}>Body</button
@@ -185,7 +229,7 @@
                 </div>
               </div>
               {#if res}
-                <span class="text-[11px] font-bold {statusColor(res.status)}"
+                <span class="text-xs font-bold {statusColor(res.status)}"
                   >{res.status}</span
                 >
               {/if}
@@ -196,7 +240,7 @@
                   <div class="space-y-0.5">
                     {#each res.headers as [k, v]}
                       <div
-                        class="flex text-[11px] font-mono border-b border-black/5 dark:border-white/5 py-0.5"
+                        class="flex text-xs font-mono border-b border-black/5 dark:border-white/5 py-0.5"
                       >
                         <span
                           class="w-32 shrink-0 text-indigo-600 dark:text-indigo-400 font-bold truncate"
@@ -240,7 +284,7 @@
           class="h-8 bg-slate-100/50 dark:bg-[#1c2128] border-b border-slate-200 dark:border-[#30363d] flex items-center px-2 shrink-0"
         >
           <span
-            class="text-[10px] font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest"
+            class="text-xs font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest"
             >Script Logs</span
           >
           {#if scriptLogs.length > 0}
@@ -269,7 +313,7 @@
                   <span
                     class="font-bold {log.level === 'error'
                       ? 'text-red-500'
-                      : 'text-indigo-500'} uppercase text-[9px]"
+                      : 'text-indigo-500'} uppercase text-[10px]"
                   >
                     {log.level}
                   </span>
@@ -302,18 +346,18 @@
           class="h-8 bg-slate-100/50 dark:bg-[#1c2128] border-b border-slate-200 dark:border-[#30363d] flex items-center px-2 shrink-0"
         >
           <span
-            class="text-[10px] font-black text-slate-500 uppercase tracking-widest"
+            class="text-xs font-black text-slate-500 uppercase tracking-widest"
             >Request</span
           >
           <div class="flex h-full gap-1 ml-4">
             <button
-              class="px-2 h-full text-[11px] font-bold {reqTab === 'headers'
+              class="px-2 h-full text-xs font-bold {reqTab === 'headers'
                 ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500'
                 : 'text-slate-400'}"
               onclick={() => (reqTab = "headers")}>Headers</button
             >
             <button
-              class="px-2 h-full text-[11px] font-bold {reqTab === 'body'
+              class="px-2 h-full text-xs font-bold {reqTab === 'body'
                 ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500'
                 : 'text-slate-400'}"
               onclick={() => (reqTab = "body")}>Body</button
@@ -325,7 +369,7 @@
             <div class="space-y-0.5">
               {#each req.headers as [k, v]}
                 <div
-                  class="flex text-[11px] font-mono border-b border-black/5 dark:border-white/5 py-0.5"
+                  class="flex text-xs font-mono border-b border-black/5 dark:border-white/5 py-0.5"
                 >
                   <span
                     class="w-32 shrink-0 text-indigo-600 dark:text-indigo-400 font-bold truncate"
@@ -364,26 +408,26 @@
         >
           <div class="flex items-center h-full">
             <span
-              class="text-[10px] font-black text-slate-500 uppercase tracking-widest"
+              class="text-xs font-black text-slate-500 uppercase tracking-widest"
               >Response</span
             >
-            <div class="flex h-full gap-1 ml-4">
-              <button
-                class="px-2 h-full text-[11px] font-bold {resTab === 'headers'
-                  ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500'
-                  : 'text-slate-400'}"
-                onclick={() => (resTab = "headers")}>Headers</button
-              >
-              <button
-                class="px-2 h-full text-[11px] font-bold {resTab === 'body'
-                  ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500'
-                  : 'text-slate-400'}"
-                onclick={() => (resTab = "body")}>Body</button
-              >
-            </div>
+                <div class="flex h-full gap-1 ml-4">
+                  <button
+                    class="px-2 h-full text-xs font-bold {resTab === 'headers'
+                      ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500'
+                      : 'text-slate-400'}"
+                    onclick={() => (resTab = "headers")}>Headers</button
+                  >
+                  <button
+                    class="px-2 h-full text-xs font-bold {resTab === 'body'
+                      ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500'
+                      : 'text-slate-400'}"
+                    onclick={() => (resTab = "body")}>Body</button
+                  >
+                </div>
           </div>
           {#if res}
-            <span class="text-[11px] font-bold {statusColor(res.status)}"
+            <span class="text-xs font-bold {statusColor(res.status)}"
               >{res.status}</span
             >
           {/if}
@@ -394,7 +438,7 @@
               <div class="space-y-0.5">
                 {#each res.headers as [k, v]}
                   <div
-                    class="flex text-[11px] font-mono border-b border-black/5 dark:border-white/5 py-0.5"
+                    class="flex text-xs font-mono border-b border-black/5 dark:border-white/5 py-0.5"
                   >
                     <span
                       class="w-32 shrink-0 text-indigo-600 dark:text-indigo-400 font-bold truncate"
@@ -466,7 +510,7 @@
                   <span
                     class="font-bold {log.level === 'error'
                       ? 'text-red-500'
-                      : 'text-indigo-500'} uppercase text-[9px]"
+                      : 'text-indigo-500'} uppercase text-[10px]"
                   >
                     {log.level}
                   </span>

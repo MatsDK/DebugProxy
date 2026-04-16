@@ -5,14 +5,28 @@ import { createTauRPCProxy as createProxy, type InferCommandOutput } from 'taurp
 type TAURI_CHANNEL<T> = (response: T) => void
 
 
-export type ScriptResult = { headers: ([string, string])[] | null; uri: string | null; status: number | null; body_base64: string | null; dropped: boolean }
+export type AppSettings = { port: number; interceptSsl: boolean; isBlocked: boolean; theme: string; scripts: ScriptConfig[] }
 
-const ARGS_MAP = { '':'{"get_ca_cert":[],"get_local_ip":[],"is_ssl_intercept_enabled":[],"start_proxy":["port"],"stop_proxy":[],"toggle_ssl_intercept":["enabled"]}', 'scripts':'{"set_script_patterns":["patterns"],"submit_script_result":["script_id","result"],"toggle_scripting":["enabled"]}' }
+export type FilterConfig = { id: string; filterProtocol: string; filterHost: string; filterPort: string; filterPath: string; filterQuery: string }
+
+export type ProxyEvent = { id: string; script_id: string; timestamp: string; method: string; uri: string; headers: ([string, string])[]; is_response: boolean; status: number | null; body: number[] | null }
+
+export type ScriptConfig = { id: string; name: string; pattern: string; description?: string | null; code: string; enabled: boolean; compileError?: string | null; filters: FilterConfig[] }
+
+export type ScriptResult = { headers: ([string, string])[] | null; uri: string | null; status: number | null; body: number[] | null; dropped: boolean }
+
+const ARGS_MAP = { '':'{"get_ca_cert":[],"get_event_by_id":["id"],"get_local_ip":[],"get_settings":[],"is_blocked":[],"is_ssl_intercept_enabled":[],"open_detached_window":["label","title","url"],"save_settings":["settings"],"start_proxy":["port"],"stop_proxy":[],"toggle_blocked":["enabled"],"toggle_ssl_intercept":["enabled"]}', 'scripts':'{"set_script_patterns":["patterns"],"submit_script_result":["script_id","result"],"toggle_scripting":["enabled"]}' }
 export type Router = { "": {get_ca_cert: () => Promise<string | null>, 
+get_event_by_id: (id: string) => Promise<ProxyEvent | null>, 
 get_local_ip: () => Promise<string>, 
+get_settings: () => Promise<AppSettings>, 
+is_blocked: () => Promise<boolean>, 
 is_ssl_intercept_enabled: () => Promise<boolean>, 
+open_detached_window: (label: string, title: string, url: string) => Promise<null>, 
+save_settings: (settings: AppSettings) => Promise<null>, 
 start_proxy: (port: number) => Promise<null>, 
 stop_proxy: () => Promise<null>, 
+toggle_blocked: (enabled: boolean) => Promise<null>, 
 toggle_ssl_intercept: (enabled: boolean) => Promise<null>},
 "scripts": {set_script_patterns: (patterns: string[]) => Promise<null>, 
 submit_script_result: (scriptId: string, result: ScriptResult) => Promise<null>, 

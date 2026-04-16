@@ -1,4 +1,4 @@
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+
 use http_body_util::Full;
 use hudsucker::{
     hyper::{body::Bytes, header, Request, Response, StatusCode},
@@ -13,17 +13,30 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::{oneshot, Mutex};
 
+fn serialize_u64_as_string<S>(val: &u64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&val.to_string())
+}
+
 #[derive(Clone, serde::Serialize, specta::Type)]
 pub struct ProxyEvent {
+    #[serde(serialize_with = "serialize_u64_as_string")]
+    #[specta(type = String)]
     pub id: u64,
+    #[serde(serialize_with = "serialize_u64_as_string")]
+    #[specta(type = String)]
     pub script_id: u64,
+    #[serde(serialize_with = "serialize_u64_as_string")]
+    #[specta(type = String)]
     pub timestamp: u64,
     pub method: String,
     pub uri: String,
     pub headers: Vec<(String, String)>,
     pub is_response: bool,
     pub status: Option<u16>,
-    pub body_base64: Option<String>,
+    pub body: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, specta::Type)]
@@ -31,7 +44,7 @@ pub struct ScriptResult {
     pub headers: Option<Vec<(String, String)>>,
     pub uri: Option<String>,
     pub status: Option<u16>,
-    pub body_base64: Option<String>,
+    pub body: Option<Vec<u8>>,
     pub dropped: bool,
 }
 
@@ -48,6 +61,9 @@ pub struct ProxyState {
     pub scripting_enabled: Arc<AtomicBool>,
     pub script_pending: Arc<Mutex<HashMap<u64, oneshot::Sender<ScriptResult>>>>,
     pub script_patterns: Arc<std::sync::RwLock<Vec<Regex>>>,
+    pub is_blocked: Arc<AtomicBool>,
+    pub history: Arc<Mutex<HashMap<String, ProxyEvent>>>,
+    pub app_handle: Arc<std::sync::Mutex<Option<AppHandle>>>,
 }
 
 impl Default for ProxyState {
@@ -64,6 +80,9 @@ impl Default for ProxyState {
             scripting_enabled: Arc::new(AtomicBool::new(true)),
             script_pending: Arc::new(Mutex::new(HashMap::new())),
             script_patterns: Arc::new(std::sync::RwLock::new(Vec::new())),
+            is_blocked: Arc::new(AtomicBool::new(false)),
+            history: Arc::new(Mutex::new(HashMap::new())),
+            app_handle: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 }
@@ -77,6 +96,8 @@ pub struct ProxyHandler<R: Runtime> {
     scripting_enabled: Arc<AtomicBool>,
     script_pending: Arc<Mutex<HashMap<u64, oneshot::Sender<ScriptResult>>>>,
     script_patterns: Arc<std::sync::RwLock<Vec<Regex>>>,
+    is_blocked: Arc<AtomicBool>,
+    history: Arc<Mutex<HashMap<String, ProxyEvent>>>,
     ca_cert_pem: String,
     request_id: Option<u64>,
     request_timestamp: Option<u64>,
@@ -95,6 +116,8 @@ impl<R: Runtime> Clone for ProxyHandler<R> {
             scripting_enabled: self.scripting_enabled.clone(),
             script_pending: self.script_pending.clone(),
             script_patterns: self.script_patterns.clone(),
+            is_blocked: self.is_blocked.clone(),
+            history: self.history.clone(),
             ca_cert_pem: self.ca_cert_pem.clone(),
             request_id: None,
             request_timestamp: None,
@@ -114,6 +137,8 @@ impl<R: Runtime> ProxyHandler<R> {
         scripting_enabled: Arc<AtomicBool>,
         script_pending: Arc<Mutex<HashMap<u64, oneshot::Sender<ScriptResult>>>>,
         script_patterns: Arc<std::sync::RwLock<Vec<Regex>>>,
+        is_blocked: Arc<AtomicBool>,
+        history: Arc<Mutex<HashMap<String, ProxyEvent>>>,
         ca_cert_pem: String,
     ) -> Self {
         Self {
@@ -125,6 +150,8 @@ impl<R: Runtime> ProxyHandler<R> {
             scripting_enabled,
             script_pending,
             script_patterns,
+            is_blocked,
+            history,
             ca_cert_pem,
             request_id: None,
             request_timestamp: None,
@@ -182,6 +209,16 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
         _ctx: &HttpContext,
         req: Request<Body>,
     ) -> RequestOrResponse {
+        if self.is_blocked.load(Ordering::Relaxed) {
+            // Simulating BLOCKED: Dropping request
+            return RequestOrResponse::Response(
+                Response::builder()
+                    .status(StatusCode::SERVICE_UNAVAILABLE)
+                    .body(Body::from(Full::new(Bytes::from("Blocked"))))
+                    .unwrap()
+            );
+        }
+
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -201,25 +238,107 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
         self.request_method = Some(method.clone());
         self.request_uri = Some(uri.clone());
 
+        if uri.contains("proxy.local") || uri == "/proxy.local" {
+            return RequestOrResponse::Response(
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header("Content-Type", "application/x-x509-ca-cert")
+                    .header("Content-Disposition", "attachment; filename=debug_proxy_ca.crt")
+                    .body(Body::from(self.ca_cert_pem.clone()))
+                    .unwrap(),
+            );
+        }
+
+        // Special handling for CONNECT Requests:
+        // We MUST NOT consume the body of a CONNECT request, as it would break
+        // the underlying stream used for tunneling. We log it and return early.
+        if req.method() == hudsucker::hyper::Method::CONNECT {
+            let event = ProxyEvent {
+                id,
+                script_id: 0,
+                timestamp,
+                method: method.clone(),
+                uri: uri.clone(),
+                headers: headers.clone(),
+                is_response: false,
+                status: None,
+                body: None,
+            };
+
+            // Cache in history
+            {
+                let mut history = self.history.lock().await;
+                history.insert(id.to_string(), event.clone());
+            }
+
+            self.emit_event(event).await;
+            return RequestOrResponse::Request(req);
+        }
+
         // Always buffer so the inspector can display the body
         let (parts, body) = req.into_parts();
         let body_bytes = Self::collect_body(body).await;
         
-        // Decompress for display in UI/Scripts if needed
-        let decompressed = Self::decompress_body(&headers, &body_bytes);
-        let body_base64 = if decompressed.is_empty() {
+        // Body for display in UI/Scripts (already decompressed)
+        let headers_vec: Vec<(String, String)> = parts.headers.iter()
+            .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or_default().to_string()))
+            .collect();
+        let decompressed = Self::decompress_body(&headers_vec, &body_bytes);
+        let body = if decompressed.is_empty() {
             None
         } else {
-            Some(STANDARD.encode(&decompressed))
+            Some(decompressed)
         };
 
-        let should_script = self.scripting_enabled.load(Ordering::Relaxed) && {
-            let patterns = self.script_patterns.read().unwrap();
-            patterns.iter().any(|re| re.is_match(&uri))
+        let event = ProxyEvent {
+            id,
+            script_id: 0,
+            timestamp,
+            method: method.clone(),
+            uri: uri.clone(),
+            headers: headers_vec.clone(),
+            is_response: false,
+            status: None,
+            body: body.clone(),
         };
+
+        // Cache in history for detached windows
+        {
+            let mut history = self.history.lock().await;
+            history.insert(id.to_string(), event.clone());
+            if history.len() > 1000 {
+                let keys: Vec<String> = history.keys().cloned().collect();
+                if let Some(min_key) = keys.iter().min() {
+                    let min_key = min_key.clone();
+                    history.remove(&min_key);
+                }
+            }
+        }
+
+        self.emit_event(event).await;
+
+        let (scripting_enabled, pattern_match, _pattern_count) = {
+            let scripting_enabled = self.scripting_enabled.load(Ordering::Relaxed);
+            let patterns = self.script_patterns.read().unwrap();
+            let mut matched = false;
+            if scripting_enabled && method != "CONNECT" {
+                for re in patterns.iter() {
+                    if re.is_match(&uri) {
+                        matched = true;
+                        break;
+                    }
+                }
+            } else {
+                matched = patterns.iter().any(|re| re.is_match(&uri));
+            }
+            (scripting_enabled, matched, patterns.len())
+        };
+        
+        let should_script = scripting_enabled && pattern_match && method != "CONNECT";
 
         let script_id = if should_script {
-            self.next_script_id.fetch_add(1, Ordering::Relaxed)
+            let sid = self.next_script_id.fetch_add(1, Ordering::Relaxed);
+            sid
         } else {
             0
         };
@@ -233,7 +352,7 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
             headers: headers.clone(),
             is_response: false,
             status: None,
-            body_base64,
+            body,
         };
 
         if should_script {
@@ -252,41 +371,59 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
                         );
                     }
 
-                    let mut builder = Request::builder()
-                        .method(parts.method.clone())
-                        .version(parts.version);
-
+                    let mut req_parts = parts;
                     if let Some(new_uri) = result.uri {
-                        builder = builder.uri(new_uri);
-                    } else {
-                        builder = builder.uri(parts.uri.clone());
+                        if let Ok(u) = new_uri.parse() {
+                            req_parts.uri = u;
+                        }
                     }
 
-                    let mut new_headers = parts.headers.clone();
                     if let Some(h) = result.headers {
-                        new_headers.clear();
+                        req_parts.headers.clear();
                         for (k, v) in h {
                             if let (Ok(name), Ok(val)) = (
                                 header::HeaderName::from_bytes(k.as_bytes()),
                                 header::HeaderValue::from_str(&v),
                             ) {
-                                new_headers.insert(name, val);
+                                req_parts.headers.insert(name, val);
                             }
                         }
                     }
-                    *builder.headers_mut().unwrap() = new_headers;
 
-                    let final_bytes = if let Some(b64) = result.body_base64 {
-                        STANDARD.decode(b64).unwrap_or(body_bytes)
-                    } else {
-                        body_bytes
-                    };
+                    // Proactively strip Accept-Encoding to prevent server-side compression
+                    // if we are likely to modify the body. This simplifies life for the proxy.
+                    req_parts.headers.remove(header::ACCEPT_ENCODING);
 
-                    RequestOrResponse::Request(
-                        builder
-                            .body(Body::from(Full::new(Bytes::from(final_bytes))))
-                            .unwrap(),
-                    )
+                    let modified = result.body.is_some();
+                    let final_bytes = result.body.unwrap_or(body_bytes);
+                    if modified {
+                        println!("[PROXY] Sending MODIFIED request body to server ({} bytes)", final_bytes.len());
+                        // Remove encoding/length headers as they are now invalid
+                        req_parts.headers.remove(header::CONTENT_ENCODING);
+                        req_parts.headers.remove(header::TRANSFER_ENCODING);
+                        req_parts.headers.insert(header::CONTENT_LENGTH, header::HeaderValue::from(final_bytes.len()));
+                        
+                        if let Ok(_json) = String::from_utf8(final_bytes.clone()) {
+                        }
+                    }
+
+                    if let Some(status) = result.status {
+                        // Support MOCK responses from handle_request
+                        if let Ok(s) = StatusCode::from_u16(status) {
+                            return RequestOrResponse::Response(
+                                Response::builder()
+                                    .status(s)
+                                    .version(req_parts.version)
+                                    .body(Body::from(Full::new(Bytes::from(final_bytes))))
+                                    .unwrap()
+                            );
+                        }
+                    }
+
+                    RequestOrResponse::Request(Request::from_parts(
+                        req_parts,
+                        Body::from(Full::new(Bytes::from(final_bytes))),
+                    ))
                 }
                 Err(_) => RequestOrResponse::Request(Request::from_parts(
                     parts,
@@ -326,17 +463,21 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
         let (parts, body) = res.into_parts();
         let body_bytes = Self::collect_body(body).await;
 
-        // Decompress for display in UI/Scripts if needed
+        // Body for display in UI/Scripts (already decompressed)
         let decompressed = Self::decompress_body(&headers, &body_bytes);
-        let body_base64 = if decompressed.is_empty() {
+        let body = if decompressed.is_empty() {
             None
         } else {
-            Some(STANDARD.encode(&decompressed))
+            Some(decompressed)
         };
 
-        let should_script = self.scripting_enabled.load(Ordering::Relaxed) && {
+        let should_script = self.scripting_enabled.load(Ordering::Relaxed) && self.request_method.as_deref() != Some("CONNECT") && {
             let patterns = self.script_patterns.read().unwrap();
-            patterns.iter().any(|re| re.is_match(&uri))
+            let matched = patterns.iter().any(|re| re.is_match(&uri));
+            if self.scripting_enabled.load(Ordering::Relaxed) && self.request_method.as_deref() != Some("CONNECT") {
+                 // Logging removed for performance
+            }
+            matched
         };
 
         let script_id = if should_script {
@@ -354,7 +495,7 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
             headers: headers.clone(),
             is_response: true,
             status: Some(status),
-            body_base64,
+            body,
         };
 
         if should_script {
@@ -364,34 +505,42 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
 
             match rx.await {
                 Ok(result) => {
-                    let new_status = result.status.unwrap_or(status);
-                    let mut builder = Response::builder()
-                        .status(new_status)
-                        .version(parts.version);
+                    let mut res_parts = parts;
+                    if let Some(status) = result.status {
+                        if let Ok(s) = StatusCode::from_u16(status) {
+                            res_parts.status = s;
+                        }
+                    }
 
-                    let mut new_headers = parts.headers.clone();
                     if let Some(h) = result.headers {
-                        new_headers.clear();
+                        res_parts.headers.clear();
                         for (k, v) in h {
                             if let (Ok(name), Ok(val)) = (
                                 header::HeaderName::from_bytes(k.as_bytes()),
                                 header::HeaderValue::from_str(&v),
                             ) {
-                                new_headers.insert(name, val);
+                                res_parts.headers.insert(name, val);
                             }
                         }
                     }
-                    *builder.headers_mut().unwrap() = new_headers;
 
-                    let final_bytes = if let Some(b64) = result.body_base64 {
-                        STANDARD.decode(b64).unwrap_or(body_bytes)
-                    } else {
-                        body_bytes
-                    };
-
-                    builder
-                        .body(Body::from(Full::new(Bytes::from(final_bytes))))
-                        .unwrap()
+                    let modified = result.body.is_some();
+                    let final_bytes = result.body.unwrap_or(body_bytes);
+                    if modified {
+                        // Remove encoding/length/integrity headers as they are now invalid
+                        res_parts.headers.remove(header::CONTENT_ENCODING);
+                        res_parts.headers.remove(header::TRANSFER_ENCODING);
+                        if let Ok(content_md5) = header::HeaderName::from_lowercase(b"content-md5") {
+                            res_parts.headers.remove(content_md5);
+                        }
+                        res_parts.headers.remove(header::ETAG);
+                        res_parts.headers.insert(header::CONTENT_LENGTH, header::HeaderValue::from(final_bytes.len()));
+                    }
+                    
+                    Response::from_parts(
+                        res_parts,
+                        Body::from(Full::new(Bytes::from(final_bytes))),
+                    )
                 }
                 Err(_) => Response::from_parts(
                     parts,
@@ -399,12 +548,19 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
                 ),
             }
         } else {
-            self.emit_event(event).await;
-            Response::from_parts(parts, Body::from(Full::new(Bytes::from(body_bytes))))
+                    // Update history
+                    {
+                        let mut history = self.history.lock().await;
+                        history.insert(id.to_string(), event.clone());
+                    }
+
+                    self.emit_event(event).await;
+                    Response::from_parts(parts, Body::from(Full::new(Bytes::from(body_bytes))))
         }
     }
 
     async fn should_intercept(&mut self, _ctx: &HttpContext, _req: &Request<Body>) -> bool {
-        self.intercept_ssl.load(Ordering::Relaxed)
+        let enable = self.intercept_ssl.load(Ordering::Relaxed);
+        enable
     }
 }
