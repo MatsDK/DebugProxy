@@ -17,8 +17,11 @@
     formatTime,
     formatDuration,
   } from "$lib/utils";
+  import { ExternalLink } from "lucide-svelte";
   import ProxyContextMenu from "$lib/components/ProxyContextMenu.svelte";
   import SettingsDropdown from "$lib/components/SettingsDropdown.svelte";
+  import InterceptorPanel from "$lib/components/InterceptorPanel.svelte";
+  import { breakpointState } from "$lib/breakpoints.svelte";
   const proxy = new ProxyState();
 
   let searchQuery = $state("");
@@ -96,7 +99,8 @@
 
   $effect(() => {
     proxy.orderedIds.length;
-    if (isFollowing)
+    activeTab;
+    if (activeTab === "requests" && isFollowing)
       setTimeout(
         () => requestList?.scrollTo({ top: requestList.scrollHeight }),
         0,
@@ -127,9 +131,22 @@
           windowState.toggleInspector(id, false);
         } else if (label === "scripts-editor") {
           windowState.toggleScripts(false);
+        } else if (label === "interceptor") {
+          windowState.toggleInterceptorWindow(false);
         }
       });
     })();
+
+    // Auto-switch to Interceptors tab when a breakpoint is hit (if not popped out)
+    $effect(() => {
+      if (
+        breakpointState.count > 0 &&
+        !windowState.isInterceptorPoppedOut &&
+        activeTab !== "interceptors"
+      ) {
+        activeTab = "interceptors";
+      }
+    });
 
     const detachKeymap = keymap.attach();
 
@@ -158,6 +175,16 @@
     } catch (e: any) {
       proxy.errorMsg = "Failed to toggle block: " + e;
     }
+  }
+
+  async function popOutInterceptors() {
+    windowState.toggleInterceptorWindow(true);
+    activeTab = "requests";
+    await taurpc.open_detached_window(
+      "interceptor",
+      "Interception Dashboard",
+      "/interceptor",
+    );
   }
 
   const keymap = new Keymap()
@@ -239,7 +266,7 @@
       );
     });
 
-  let activeTab = $state<"requests" | "scripts">("requests");
+  let activeTab = $state<"requests" | "scripts" | "interceptors">("requests");
 
   import type { CtxMenu } from "$lib/types";
   let ctxMenu = $state<CtxMenu>(null);
@@ -293,6 +320,38 @@
               : 'border-transparent text-slate-500 hover:text-slate-700'}"
             >Scripts</button
           >
+        {/if}
+        {#if !windowState.isInterceptorPoppedOut}
+          <div
+            class="flex items-center h-full border-b-2 transition-all {activeTab ===
+            'interceptors'
+              ? 'border-indigo-500'
+              : 'border-transparent'}"
+          >
+            <button
+              onclick={() => (activeTab = "interceptors")}
+              class="px-3 h-full text-[11px] font-bold flex items-center gap-1.5 {activeTab ===
+              'interceptors'
+                ? 'text-indigo-600 dark:text-indigo-400'
+                : 'text-slate-500 hover:text-slate-700'}"
+            >
+              <span>Interceptors</span>
+              {#if breakpointState.count > 0}
+                <span
+                  class="px-1.5 py-0.5 rounded-full bg-red-500 text-[9px] text-white leading-none"
+                >
+                  {breakpointState.count}
+                </span>
+              {/if}
+            </button>
+            <button
+              onclick={popOutInterceptors}
+              class="pr-2 h-full flex items-center text-slate-400 hover:text-indigo-500 transition-colors"
+              title="Pop out Interceptor"
+            >
+              <ExternalLink size={10} />
+            </button>
+          </div>
         {/if}
       </nav>
     </div>
@@ -362,7 +421,7 @@
             ? 'bg-red-500 text-white hover:bg-red-600 shadow-sm shadow-red-500/20'
             : 'bg-emerald-500 text-white hover:bg-emerald-600 shadow-sm shadow-emerald-500/20'}"
         >
-          <span>{proxy.isRunning ? "STOP" : "START"}</span>
+          <span>{proxy.isRunning ? "Stop" : "Start"}</span>
         </button>
       </div>
     </div>
@@ -412,7 +471,7 @@
                 <button
                   onclick={() => proxy.startProxy()}
                   class="px-2 py-0.5 text-[9px] font-bold bg-red-500 hover:bg-red-600 text-white rounded transition-all active:scale-95"
-                  >RETRY</button
+                  >Retry</button
                 >
               </div>
             {/if}
@@ -444,7 +503,7 @@
               <div class="flex-1"></div>
 
               <span
-                class="text-[10px] font-bold text-slate-400 bg-slate-100 dark:bg-white/5 px-2 py-0.5 rounded mr-2"
+                class="text-[11px] font-bold text-slate-400 bg-slate-100 dark:bg-white/5 px-2 py-0.5 rounded mr-2"
                 >Total: {proxy.orderedIds.length}</span
               >
 
@@ -494,7 +553,8 @@
                       ? 'bg-indigo-50 dark:bg-[#1f2a3a] outline outline-1 -outline-offset-1 outline-indigo-400'
                       : ''}"
                     onclick={() => (selectedId = id)}
-                    onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (selectedId = id)}
+                    onkeydown={(e) =>
+                      (e.key === "Enter" || e.key === " ") && (selectedId = id)}
                     oncontextmenu={(e) => openCtxMenu(e, id)}
                     role="button"
                     tabindex="0"
@@ -601,6 +661,8 @@
           {/if}
         </Pane>
       </PaneGroup>
+    {:else if activeTab === "interceptors"}
+      <InterceptorPanel {proxy} />
     {:else}
       <div class="flex-1 overflow-hidden flex flex-col">
         {#if windowState.isScriptsPoppedOut}

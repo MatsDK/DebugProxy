@@ -31,6 +31,9 @@ pub trait Api {
     async fn export_ca_cert() -> Result<(), String>;
     async fn reset_settings() -> Result<AppSettings, String>;
     async fn broadcast_theme(is_dark: bool) -> Result<(), String>;
+    async fn emit_breakpoint_hit(id: String, bp_type: String, event: ProxyEvent) -> Result<(), String>;
+    async fn submit_breakpoint_resolution(id: String, modified_event: Option<ProxyEvent>) -> Result<(), String>;
+    async fn trigger_breakpoint_sync() -> Result<(), String>;
 }
 
 #[taurpc::procedures(path = "scripts", export_to = "../src/lib/bindings.ts")]
@@ -50,6 +53,15 @@ pub trait Events {
 
     #[taurpc(event)]
     async fn theme_changed(is_dark: bool);
+
+    #[taurpc(event)]
+    async fn breakpoint_hit(id: String, bp_type: String, event: ProxyEvent);
+
+    #[taurpc(event)]
+    async fn breakpoint_resolved_signal(id: String, modified_event: Option<ProxyEvent>);
+
+    #[taurpc(event)]
+    async fn sync_requested();
 }
 
 #[derive(Clone)]
@@ -281,6 +293,11 @@ impl Api for ApiImpl {
             .as_ref()
             .ok_or("App handle not initialized")?;
 
+        if let Some(window) = tauri::Manager::get_webview_window(handle, &label) {
+            let _ = window.set_focus();
+            return Ok(());
+        }
+
         let _window = tauri::WebviewWindowBuilder::new(handle, label, tauri::WebviewUrl::App(url.into()))
             .title(title)
             .inner_size(800.0, 600.0)
@@ -298,6 +315,42 @@ impl Api for ApiImpl {
             let _ = trigger.theme_changed(is_dark);
         } else {
             log::warn!("[Events] Failed to broadcast theme: AppHandle is None");
+        }
+        Ok(())
+    }
+
+    async fn emit_breakpoint_hit(
+        self,
+        id: String,
+        bp_type: String,
+        event: ProxyEvent,
+    ) -> Result<(), String> {
+        let handle_opt = self.state.app_handle.lock().unwrap();
+        if let Some(handle) = handle_opt.as_ref() {
+            let trigger = AppEvents::new(handle.clone());
+            let _ = trigger.breakpoint_hit(id, bp_type, event);
+        }
+        Ok(())
+    }
+
+    async fn submit_breakpoint_resolution(
+        self,
+        id: String,
+        modified_event: Option<ProxyEvent>,
+    ) -> Result<(), String> {
+        let handle_opt = self.state.app_handle.lock().unwrap();
+        if let Some(handle) = handle_opt.as_ref() {
+            let trigger = AppEvents::new(handle.clone());
+            let _ = trigger.breakpoint_resolved_signal(id, modified_event);
+        }
+        Ok(())
+    }
+
+    async fn trigger_breakpoint_sync(self) -> Result<(), String> {
+        let handle_opt = self.state.app_handle.lock().unwrap();
+        if let Some(handle) = handle_opt.as_ref() {
+            let trigger = AppEvents::new(handle.clone());
+            let _ = trigger.sync_requested();
         }
         Ok(())
     }

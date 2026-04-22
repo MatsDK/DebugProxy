@@ -20,15 +20,23 @@ where
     serializer.serialize_str(&val.to_string())
 }
 
-#[derive(Clone, serde::Serialize, specta::Type)]
+fn deserialize_u64_from_string<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    s.parse::<u64>().map_err(serde::de::Error::custom)
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, specta::Type, Debug)]
 pub struct ProxyEvent {
-    #[serde(serialize_with = "serialize_u64_as_string")]
+    #[serde(serialize_with = "serialize_u64_as_string", deserialize_with = "deserialize_u64_from_string")]
     #[specta(type = String)]
     pub id: u64,
-    #[serde(serialize_with = "serialize_u64_as_string")]
+    #[serde(serialize_with = "serialize_u64_as_string", deserialize_with = "deserialize_u64_from_string")]
     #[specta(type = String)]
     pub script_id: u64,
-    #[serde(serialize_with = "serialize_u64_as_string")]
+    #[serde(serialize_with = "serialize_u64_as_string", deserialize_with = "deserialize_u64_from_string")]
     #[specta(type = String)]
     pub timestamp: u64,
     pub method: String,
@@ -216,7 +224,21 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
         self.request_id = Some(id);
         self.request_timestamp = Some(timestamp);
         self.request_method = Some(method.clone());
-        self.request_uri = Some(uri.clone());
+
+        let mut absolute_uri = uri.clone();
+        if !absolute_uri.contains("://") {
+            if let Some(host) = headers.iter().find(|(k, _)| k.to_lowercase() == "host").map(|(_, v)| v) {
+                // If it doesn't contain ://, it's likely an intercepted HTTPS request 
+                // OR a plain HTTP request with a relative URI (uncommon in proxying but possible)
+                let proto = if host.ends_with(":80") || (!host.contains(':') && !self.state.intercept_ssl.load(Ordering::Relaxed)) {
+                    "http"
+                } else {
+                    "https"
+                };
+                absolute_uri = format!("{}://{}{}", proto, host, uri);
+            }
+        }
+        self.request_uri = Some(absolute_uri.clone());
 
         if uri.contains("proxy.local") || uri == "/proxy.local" {
             return RequestOrResponse::Response(
@@ -270,16 +292,30 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
             Some(decompressed)
         };
 
+        let scripting_enabled = self.state.scripting_enabled.load(Ordering::Relaxed);
+        let pattern_match = {
+            let patterns = self.state.script_patterns.read().unwrap();
+            patterns.iter().any(|re| re.is_match(&absolute_uri))
+        };
+        
+        let should_script = scripting_enabled && pattern_match && method != "CONNECT";
+
+        let script_id = if should_script {
+            self.state.next_script_id.fetch_add(1, Ordering::Relaxed)
+        } else {
+            0
+        };
+
         let event = ProxyEvent {
             id,
-            script_id: 0,
+            script_id,
             timestamp,
             method: method.clone(),
-            uri: uri.clone(),
-            headers: headers_vec.clone(),
+            uri: absolute_uri.clone(),
+            headers: headers.clone(),
             is_response: false,
             status: None,
-            body: body.clone(),
+            body,
         };
 
         // Cache in history for detached windows
@@ -297,48 +333,9 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
 
         self.emit_event(event).await;
 
-        let (scripting_enabled, pattern_match, _pattern_count) = {
-            let scripting_enabled = self.state.scripting_enabled.load(Ordering::Relaxed);
-            let patterns = self.state.script_patterns.read().unwrap();
-            let mut matched = false;
-            if scripting_enabled && method != "CONNECT" {
-                for re in patterns.iter() {
-                    if re.is_match(&uri) {
-                        matched = true;
-                        break;
-                    }
-                }
-            } else {
-                matched = patterns.iter().any(|re| re.is_match(&uri));
-            }
-            (scripting_enabled, matched, patterns.len())
-        };
-        
-        let should_script = scripting_enabled && pattern_match && method != "CONNECT";
-
-        let script_id = if should_script {
-            let sid = self.state.next_script_id.fetch_add(1, Ordering::Relaxed);
-            sid
-        } else {
-            0
-        };
-
-        let event = ProxyEvent {
-            id,
-            script_id,
-            timestamp,
-            method: method.clone(),
-            uri: uri.clone(),
-            headers: headers.clone(),
-            is_response: false,
-            status: None,
-            body,
-        };
-
         if should_script {
             let (tx, rx) = oneshot::channel();
             self.state.script_pending.lock().await.insert(script_id, tx);
-            self.emit_event(event).await;
 
             match rx.await {
                 Ok(result) => {
@@ -382,9 +379,6 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
                         req_parts.headers.remove(header::CONTENT_ENCODING);
                         req_parts.headers.remove(header::TRANSFER_ENCODING);
                         req_parts.headers.insert(header::CONTENT_LENGTH, header::HeaderValue::from(final_bytes.len()));
-                        
-                        if let Ok(_json) = String::from_utf8(final_bytes.clone()) {
-                        }
                     }
 
                     if let Some(status) = result.status {
@@ -411,7 +405,6 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
                 )),
             }
         } else {
-            self.emit_event(event).await;
             RequestOrResponse::Request(Request::from_parts(
                 parts,
                 Body::from(Full::new(Bytes::from(body_bytes))),
@@ -438,6 +431,13 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
             .collect();
 
         let uri = self.request_uri.clone().unwrap_or_default();
+        let absolute_uri = uri.clone();
+        if !absolute_uri.contains("://") {
+             // We don't have the original request headers here easily unless we stored them,
+             // but we can try to find the host in the response if it was reflected (unlikely)
+             // or just use the cached request_uri if it was already absolute.
+             // Actually, handle_request should have stored the absolute one if possible.
+        }
 
         // Always buffer for display
         let (parts, body) = res.into_parts();
@@ -451,14 +451,13 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
             Some(decompressed)
         };
 
-        let should_script = self.state.scripting_enabled.load(Ordering::Relaxed) && self.request_method.as_deref() != Some("CONNECT") && {
+        let scripting_enabled = self.state.scripting_enabled.load(Ordering::Relaxed);
+        let pattern_match = {
             let patterns = self.state.script_patterns.read().unwrap();
-            let matched = patterns.iter().any(|re| re.is_match(&uri));
-            if self.state.scripting_enabled.load(Ordering::Relaxed) && self.request_method.as_deref() != Some("CONNECT") {
-                 // Logging removed for performance
-            }
-            matched
+            patterns.iter().any(|re| re.is_match(&absolute_uri))
         };
+
+        let should_script = scripting_enabled && self.request_method.as_deref() != Some("CONNECT") && pattern_match;
 
         let script_id = if should_script {
             self.state.next_script_id.fetch_add(1, Ordering::Relaxed)
@@ -471,17 +470,24 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
             script_id,
             timestamp,
             method: self.request_method.clone().unwrap_or_default(),
-            uri: self.request_uri.clone().unwrap_or_default(),
+            uri: absolute_uri,
             headers: headers.clone(),
             is_response: true,
             status: Some(status),
             body,
         };
 
+        // Update history
+        {
+            let mut history: tokio::sync::MutexGuard<HashMap<String, ProxyEvent>> = self.state.history.lock().await;
+            history.insert(id.to_string(), event.clone());
+        }
+
+        self.emit_event(event).await;
+
         if should_script {
             let (tx, rx) = oneshot::channel();
             self.state.script_pending.lock().await.insert(script_id, tx);
-            self.emit_event(event).await;
 
             match rx.await {
                 Ok(result) => {
@@ -528,14 +534,7 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
                 ),
             }
         } else {
-                    // Update history
-                    {
-                        let mut history: tokio::sync::MutexGuard<HashMap<String, ProxyEvent>> = self.state.history.lock().await;
-                        history.insert(id.to_string(), event.clone());
-                    }
-
-                    self.emit_event(event).await;
-                    Response::from_parts(parts, Body::from(Full::new(Bytes::from(body_bytes))))
+            Response::from_parts(parts, Body::from(Full::new(Bytes::from(body_bytes))))
         }
     }
 
@@ -557,7 +556,7 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
             let patterns = self.state.ssl_exception_patterns.read().unwrap();
             for re in patterns.iter() {
                 if re.is_match(host) {
-                    log::info!("[Proxy] Bypassing SSL for host: {}", host);
+                    // log::info!("[Proxy] Bypassing SSL for host: {}", host);
                     return false;
                 }
             }

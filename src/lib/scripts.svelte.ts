@@ -4,6 +4,9 @@ import { toast } from "./toast.svelte";
 import type { ScriptConfig, ProxyEvent } from "$lib/types";
 import type { ScriptResult } from "$lib/bindings";
 import type { ProxyState } from "./proxy.svelte";
+import { breakpointState } from "./breakpoints.svelte";
+import { windowState } from "./window.svelte";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export class ScriptsState {
   enabled = $state(true);
@@ -18,14 +21,20 @@ export class ScriptsState {
   private compilationTimeout: any;
   private toastDebounce: any;
   private lastHydrateTime = Date.now();
+  private isHydrated = $state(false);
 
   constructor(proxy: ProxyState) {
     this.proxy = proxy;
 
-    // Compilation and Backend Sync Logic
+    // Compilation and Backend Sync Logic (ONLY in main window)
     $effect(() => {
-      // Track all dependencies deeply (JSON stringify ensures deep read)
-      const _tracker = JSON.stringify(this.list);
+      const isMain = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ && getCurrentWindow().label === "main";
+      console.log(`[Scripts] Sync effect triggered. isMain: ${isMain}, isHydrated: ${this.isHydrated}`);
+      
+      if (!isMain || !this.isHydrated) return;
+
+      // Track all dependencies deeply
+      const scriptsToSync = $state.snapshot(this.list);
       const isScriptingEnabled = this.enabled;
 
       clearTimeout(this.compilationTimeout);
@@ -34,7 +43,11 @@ export class ScriptsState {
         try {
           await this.compileAll();
 
-          const deps = this.list.map(s => ({ id: s.id, code: s.code, enabled: s.enabled, pattern: s.pattern }));
+          // Snapshot AFTER compilation so patterns are populated
+          const scriptsToSync = $state.snapshot(this.list);
+          const isScriptingEnabled = this.enabled;
+
+          const deps = scriptsToSync.map(s => ({ id: s.id, code: s.code, enabled: s.enabled, pattern: s.pattern }));
           await this.syncBackend(isScriptingEnabled, deps);
           await this.proxy.saveSettings();
 
@@ -65,6 +78,7 @@ export class ScriptsState {
     this.lastHydrateTime = Date.now();
     this.list = scripts;
     this.enabled = enabled;
+    this.isHydrated = true;
   }
 
   compileToRegex(filters: any[]): string {
@@ -408,6 +422,34 @@ export class ScriptsState {
           try { localStorage.setItem("proxy_script_store", "[]"); } catch { }
         },
       },
+
+      /**
+       * Pause script execution and wait for manual user intervention in the UI.
+       * The Interception Dashboard will open automatically if not already visible.
+       */
+      breakpoint: () => new Promise<void>((resolve) => {
+        const type = isResponse ? 'response' : 'request';
+        
+        breakpointState.add({
+          id: event.id,
+          type,
+          event: ctx, // Use the proxy context so UI edits affect the script variables
+          resolve: () => resolve(),
+          timestamp: Date.now()
+        });
+
+        // Auto-popout disabled per user request - only manual popout allowed
+        /*
+        if (!windowState.isInterceptorPoppedOut) {
+          windowState.toggleInterceptorWindow(true);
+          taurpc.open_detached_window(
+            "interceptor",
+            "Interception Dashboard",
+            "/interceptor"
+          ).catch(console.error);
+        }
+        */
+      }),
     };
 
     // ── Execute Scripts ──

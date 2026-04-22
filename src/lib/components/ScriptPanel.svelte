@@ -7,7 +7,11 @@
   import Toggle from "$lib/components/Toggle.svelte";
   import ConfirmationModal from "$lib/components/ConfirmationModal.svelte";
   import { taurpc } from "$lib/rpc";
-  import { Trash2, Plus } from "lucide-svelte";
+  import { toast } from "$lib/toast.svelte";
+  import { Trash2, Plus, Sparkles } from "lucide-svelte";
+  import * as prettier from "prettier/standalone";
+  import * as babel from "prettier/plugins/babel";
+  import * as estree from "prettier/plugins/estree";
 
   import type { ScriptConfig } from "$lib/types";
   let { scripts } = $props<{ scripts: ScriptsState }>();
@@ -170,6 +174,23 @@
       selected.pattern = scripts.compileToRegex(selected.filters);
     }
   });
+
+  async function formatSelectedScript() {
+    if (!selected) return;
+    try {
+      const formatted = await prettier.format(selected.code, {
+        parser: "babel",
+        plugins: [babel, estree],
+        semi: true,
+        singleQuote: false,
+        tabWidth: 2,
+      });
+      selected.code = formatted;
+    } catch (err: any) {
+      console.error("Format error:", err);
+      toast.error("Format failed: " + err.message);
+    }
+  }
 </script>
 
 <div
@@ -186,7 +207,7 @@
         class="h-10 px-3 border-b border-slate-200 dark:border-[#30363d] flex items-center justify-between bg-white dark:bg-[#0d1117] shrink-0"
       >
         <h2
-          class="text-xs font-bold text-slate-500 dark:text-slate-400 tracking-widest flex items-center gap-2"
+          class="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest flex items-center gap-2"
         >
           Scripts
           <Toggle bind:checked={scripts.enabled} size="sm" />
@@ -322,6 +343,13 @@
             />
           </div>
           <div class="flex items-center gap-3 shrink-0 ml-4">
+            <button
+              onclick={formatSelectedScript}
+              class="flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-bold bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded border border-indigo-200/50 dark:border-indigo-500/20 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition-all active:scale-95"
+            >
+              <Sparkles size={12} />
+              Format
+            </button>
             <span class="text-xs font-bold text-slate-400 tracking-tight"
               >{selected.enabled ? "Active" : "Paused"}</span
             >
@@ -374,8 +402,8 @@
           <div
             class="p-6 bg-slate-50 dark:bg-[#161b22] rounded-full border border-dashed border-slate-200 dark:border-[#30363d]"
           >
-            <span class="text-xs uppercase font-bold tracking-widest opacity-20"
-              >No Selection</span
+            <span class="text-xs font-bold tracking-wide opacity-20"
+              >No selection</span
             >
           </div>
           <p class="text-sm italic font-medium">
@@ -461,8 +489,8 @@
               >
                 <div class="flex items-center gap-2 mb-1">
                   <span
-                    class="text-[11px] font-bold uppercase tracking-widest text-slate-500"
-                    >Edit Selected Pattern</span
+                    class="text-[11px] font-bold tracking-wide text-slate-500"
+                    >Edit selected pattern</span
                   >
                 </div>
 
@@ -565,7 +593,7 @@
           <div class="space-y-1.5">
             <label
               for="script-notes"
-              class="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider cursor-pointer"
+              class="text-[11px] font-bold text-slate-400 dark:text-slate-500 tracking-wide cursor-pointer"
             >
               Notes
             </label>
@@ -581,9 +609,9 @@
           <!-- Compiled Pattern Preview -->
           <div class="space-y-1.5">
             <span
-              class="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider"
+              class="text-[11px] font-bold text-slate-400 dark:text-slate-500 tracking-wide"
             >
-              Compiled Matching Regex
+              Compiled matching regex
             </span>
             <div
               class="p-2 bg-slate-100 dark:bg-[#0d1117] border border-slate-200 dark:border-[#30363d] rounded font-mono text-[9px] text-slate-500 dark:text-slate-400 break-all leading-tight"
@@ -596,7 +624,7 @@
           <div class="space-y-1.5">
             <button
               onclick={() => (showDocs = !showDocs)}
-              class="w-full flex items-center justify-between text-[11px] font-bold text-indigo-500 dark:text-indigo-400 uppercase tracking-wider hover:text-indigo-600 dark:hover:text-indigo-300 transition-colors"
+              class="w-full flex items-center justify-between text-[11px] font-bold text-indigo-500 dark:text-indigo-400 tracking-wide hover:text-indigo-600 dark:hover:text-indigo-300 transition-colors"
             >
               <span>API Reference</span>
               <svg
@@ -623,7 +651,7 @@
                   class="p-3 bg-white dark:bg-[#161b22] border border-slate-200 dark:border-[#30363d] rounded-lg"
                 >
                   <div
-                    class="text-[10px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-2"
+                    class="text-[10px] font-black text-slate-500 dark:text-slate-400 tracking-wide mb-2"
                   >
                     Handlers
                   </div>
@@ -637,7 +665,7 @@ onResponse(res, proxy)</pre>
                   class="p-3 bg-white dark:bg-[#161b22] border border-slate-200 dark:border-[#30363d] rounded-lg"
                 >
                   <div
-                    class="text-[10px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-2"
+                    class="text-[10px] font-black text-slate-500 dark:text-slate-400 tracking-wide mb-2"
                   >
                     req / res Object
                   </div>
@@ -697,7 +725,7 @@ onResponse(res, proxy)</pre>
                   class="p-3 bg-white dark:bg-[#161b22] border border-slate-200 dark:border-[#30363d] rounded-lg"
                 >
                   <div
-                    class="text-[10px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-2"
+                    class="text-[10px] font-black text-slate-500 dark:text-slate-400 tracking-wide mb-2"
                   >
                     proxy Object
                   </div>
@@ -753,7 +781,7 @@ onResponse(res, proxy)</pre>
                   class="p-3 bg-white dark:bg-[#161b22] border border-slate-200 dark:border-[#30363d] rounded-lg"
                 >
                   <div
-                    class="text-[10px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-2"
+                    class="text-[10px] font-black text-slate-500 dark:text-slate-400 tracking-wide mb-2"
                   >
                     Quick Examples
                   </div>
@@ -785,7 +813,7 @@ if (req.url.hostname.includes(
                   class="p-2.5 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 rounded-lg"
                 >
                   <div
-                    class="text-[9px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-1"
+                    class="text-[9px] font-bold text-amber-600 dark:text-amber-400 tracking-wide mb-1"
                   >
                     ⚠ Body Channels
                   </div>
@@ -819,8 +847,8 @@ if (req.url.hostname.includes(
         <div
           class="flex-1 flex flex-col items-center justify-center p-8 space-y-4 opacity-30 select-none grayscale"
         >
-          <span class="text-[10px] font-bold uppercase tracking-tight"
-            >No Selection</span
+          <span class="text-[10px] font-bold tracking-tight"
+            >No selection</span
           >
         </div>
       {/if}

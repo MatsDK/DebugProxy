@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "debug_proxy",
         "width": 1200,
         "height": 800,

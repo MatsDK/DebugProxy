@@ -1,5 +1,6 @@
 import { SvelteMap } from "svelte/reactivity";
 import { taurpc } from "./rpc";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { ProxyEvent, ScriptLog } from "$lib/types";
 import { ScriptsState } from "./scripts.svelte";
 
@@ -74,6 +75,8 @@ export class ProxyState {
     } catch (e) {
       console.error("[Proxy] Failed to load settings:", e);
     }
+
+    this.initialized = true;
 
     try {
       await taurpc.start_proxy(this.port);
@@ -188,7 +191,12 @@ export class ProxyState {
     }
   }
 
+  private initialized = false;
+
   async saveSettings() {
+    const isMain = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ && getCurrentWindow().label === "main";
+    if (!isMain || !this.initialized) return;
+
     this.port = Number(this.port);
     try {
       const payload = {
@@ -222,6 +230,10 @@ export class ProxyState {
   }
 
   private async setupListeners() {
+    // Cache window label for isMain check
+    const win = getCurrentWindow();
+    const isMain = win.label === "main";
+
     await taurpc.events.proxy_event.on(async (e) => {
       // Map from TauRPC's generated ProxyEvent (number[] body) to our internal ProxyEvent (Uint8Array body)
       const event: ProxyEvent = {
@@ -246,6 +258,11 @@ export class ProxyState {
       }
 
       if (event.script_id !== "0") {
+        if (!isMain) {
+          // console.log(`[Proxy] Skipping script execution for event ${id} (not main window)`);
+          return;
+        }
+
         try {
           // Use the internal event type for scripts
           const result = await this.scripts.runScripts(event, event.is_response);
