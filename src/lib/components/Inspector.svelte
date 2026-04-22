@@ -347,16 +347,7 @@ async function formatEditableResBody() {
       if (key) delete h[key];
     }
   }
-
-  function handleKeydown(e: KeyboardEvent) {
-    if (editable && onExecute && e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      onExecute();
-    }
-  }
 </script>
-
-<svelte:window onkeydown={handleKeydown} />
 
 <div
   class="flex flex-col flex-1 min-h-0 bg-white dark:bg-[#0d1117] font-sans"

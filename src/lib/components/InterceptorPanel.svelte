@@ -39,7 +39,16 @@
       resume(id);
     }
   }
+
+  function handleKeydown(e: KeyboardEvent) {
+    if (selectedId && (e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      resume(selectedId);
+    }
+  }
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 <div class="flex flex-1 min-h-0 bg-white dark:bg-[#0d1117] font-sans">
   {#if breakpointState.count === 0}
