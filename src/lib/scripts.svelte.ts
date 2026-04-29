@@ -195,7 +195,7 @@ export class ScriptsState {
     let _mocked = false;
     let _dropped = false;
 
-    const setBytes = (bytes: Uint8Array | null, channel: typeof bodyChannel) => {
+    const setBytes = (bytes: number[] | null, channel: typeof bodyChannel) => {
       if (bodyChannel !== 'none' && bodyChannel !== channel) {
         // Channel switch — invalidate old proxies
         if (bodyChannel === 'json') jsonProxyAlive = false;
@@ -287,11 +287,11 @@ export class ScriptsState {
       // ── body — String body (channel: 'body') ──
       get body() {
         if (!currentBytes) return null;
-        try { return new TextDecoder().decode(currentBytes); }
+        try { return new TextDecoder().decode(new Uint8Array(currentBytes)); }
         catch { return "[Binary Data]"; }
       },
       set body(v: string | null) {
-        setBytes(v === null ? null : new TextEncoder().encode(v), 'body');
+        setBytes(v === null ? null : Array.from(new TextEncoder().encode(v)), 'body');
       },
 
       // ── text — Alias for body ──
@@ -299,8 +299,8 @@ export class ScriptsState {
       set text(v: string | null) { this.body = v; },
 
       // ── raw — Uint8Array body (channel: 'raw') ──
-      get raw() { return currentBytes; },
-      set raw(v: Uint8Array | null) { setBytes(v, 'raw'); },
+      get raw() { return currentBytes ? new Uint8Array(currentBytes) : null; },
+      set raw(v: Uint8Array | null) { setBytes(v ? Array.from(v) : null, 'raw'); },
 
       // ── json — Deep proxy with channel lock (channel: 'json') ──
       get json() {
@@ -319,7 +319,7 @@ export class ScriptsState {
                 set: (t, p, v) => {
                   if (!jsonProxyAlive) return true; // dead proxy — no-op
                   t[p] = v;
-                  setBytes(new TextEncoder().encode(JSON.stringify(obj)), 'json');
+                  setBytes(Array.from(new TextEncoder().encode(JSON.stringify(obj))), 'json');
                   return true;
                 }
               });
@@ -330,7 +330,7 @@ export class ScriptsState {
         } catch { return null; }
       },
       set json(v: any) {
-        setBytes(new TextEncoder().encode(JSON.stringify(v)), 'json');
+        setBytes(Array.from(new TextEncoder().encode(JSON.stringify(v))), 'json');
       },
 
       // ── formData — URLSearchParams for form-encoded bodies (channel: 'formData') ──
@@ -350,7 +350,7 @@ export class ScriptsState {
                 const ret = val.apply(target, args);
                 // After any mutating call, sync back
                 if (['set', 'append', 'delete', 'sort'].includes(prop as string)) {
-                  setBytes(new TextEncoder().encode(target.toString()), 'formData');
+                  setBytes(Array.from(new TextEncoder().encode(target.toString())), 'formData');
                 }
                 return ret;
               };
@@ -383,10 +383,10 @@ export class ScriptsState {
         event.status = status;
         if (body !== undefined) {
           if (typeof body === 'object') {
-            setBytes(new TextEncoder().encode(JSON.stringify(body)), 'body');
+            setBytes(Array.from(new TextEncoder().encode(JSON.stringify(body))), 'body');
             headersProxy['content-type'] = 'application/json';
           } else {
-            setBytes(new TextEncoder().encode(String(body)), 'body');
+            setBytes(Array.from(new TextEncoder().encode(String(body))), 'body');
           }
         }
         if (headers) {
@@ -437,18 +437,6 @@ export class ScriptsState {
           resolve: () => resolve(),
           timestamp: Date.now()
         });
-
-        // Auto-popout disabled per user request - only manual popout allowed
-        /*
-        if (!windowState.isInterceptorPoppedOut) {
-          windowState.toggleInterceptorWindow(true);
-          taurpc.open_detached_window(
-            "interceptor",
-            "Interception Dashboard",
-            "/interceptor"
-          ).catch(console.error);
-        }
-        */
       }),
     };
 
@@ -486,10 +474,10 @@ export class ScriptsState {
     }
 
     if (currentBytes !== originalBytes) {
-      result.body = currentBytes ? Array.from(currentBytes) : null;
+      result.body = currentBytes;
     }
 
-    result.headers = [...headersRaw];
+    result.headers = headersRaw;
     result.uri = currentUri !== event.uri ? currentUri : null;
     result.status = (event.status !== undefined && event.status !== null) ? event.status : null;
 

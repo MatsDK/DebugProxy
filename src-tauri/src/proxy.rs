@@ -56,6 +56,12 @@ pub struct ScriptResult {
     pub dropped: bool,
 }
 
+#[derive(Clone, Serialize, Deserialize, Debug, specta::Type)]
+pub struct HistoryEntry {
+    pub request: ProxyEvent,
+    pub response: Option<ProxyEvent>,
+}
+
 #[derive(Clone)]
 pub struct ProxyState {
     pub is_running: Arc<AtomicBool>,
@@ -76,7 +82,7 @@ pub struct ProxyState {
     pub script_patterns: Arc<std::sync::RwLock<Vec<Regex>>>,
     pub is_blocked: Arc<AtomicBool>,
     /// In-memory cache of recent traffic for detached inspector windows
-    pub history: Arc<Mutex<HashMap<String, ProxyEvent>>>,
+    pub history: Arc<Mutex<HashMap<String, HistoryEntry>>>,
     pub app_handle: Arc<std::sync::Mutex<Option<AppHandle>>>,
     /// Patterns for hosts that should bypass SSL decryption
     pub ssl_exception_patterns: Arc<std::sync::RwLock<Vec<Regex>>>,
@@ -270,7 +276,10 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
             // Cache in history
             {
                 let mut history = self.state.history.lock().await;
-                history.insert(id.to_string(), event.clone());
+                history.insert(id.to_string(), HistoryEntry {
+                    request: event.clone(),
+                    response: None,
+                });
             }
 
             self.emit_event(event).await;
@@ -320,8 +329,11 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
 
         // Cache in history for detached windows
         {
-            let mut history: tokio::sync::MutexGuard<HashMap<String, ProxyEvent>> = self.state.history.lock().await;
-            history.insert(id.to_string(), event.clone());
+            let mut history = self.state.history.lock().await;
+            history.insert(id.to_string(), HistoryEntry {
+                request: event.clone(),
+                response: None,
+            });
             if history.len() > 1000 {
                 let keys: Vec<String> = history.keys().cloned().collect();
                 if let Some(min_key) = keys.iter().min() {
@@ -349,13 +361,13 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
                     }
 
                     let mut req_parts = parts;
-                    if let Some(new_uri) = result.uri {
+                    if let Some(new_uri) = result.uri.clone() {
                         if let Ok(u) = new_uri.parse() {
                             req_parts.uri = u;
                         }
                     }
 
-                    if let Some(h) = result.headers {
+                    if let Some(h) = result.headers.clone() {
                         req_parts.headers.clear();
                         for (k, v) in h {
                             if let (Ok(name), Ok(val)) = (
@@ -372,13 +384,29 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
                     req_parts.headers.remove(header::ACCEPT_ENCODING);
 
                     let modified = result.body.is_some();
-                    let final_bytes = result.body.unwrap_or(body_bytes);
+                    let final_bytes = result.body.clone().unwrap_or(body_bytes);
                     if modified {
                         println!("[PROXY] Sending MODIFIED request body to server ({} bytes)", final_bytes.len());
                         // Remove encoding/length headers as they are now invalid
                         req_parts.headers.remove(header::CONTENT_ENCODING);
                         req_parts.headers.remove(header::TRANSFER_ENCODING);
                         req_parts.headers.insert(header::CONTENT_LENGTH, header::HeaderValue::from(final_bytes.len()));
+                    }
+
+                    // Update history with script modifications for detached windows
+                    {
+                        let mut history = self.state.history.lock().await;
+                        if let Some(entry) = history.get_mut(&id.to_string()) {
+                            if let Some(new_uri) = result.uri.as_ref() {
+                                entry.request.uri = new_uri.clone();
+                            }
+                            if let Some(new_headers) = result.headers.as_ref() {
+                                entry.request.headers = new_headers.clone();
+                            }
+                            if let Some(new_body) = result.body.as_ref() {
+                                entry.request.body = Some(new_body.clone());
+                            }
+                        }
                     }
 
                     if let Some(status) = result.status {
@@ -479,8 +507,26 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
 
         // Update history
         {
-            let mut history: tokio::sync::MutexGuard<HashMap<String, ProxyEvent>> = self.state.history.lock().await;
-            history.insert(id.to_string(), event.clone());
+            let mut history = self.state.history.lock().await;
+            if let Some(entry) = history.get_mut(&id.to_string()) {
+                entry.response = Some(event.clone());
+            } else {
+                // If the entry doesn't exist for some reason, we still want it in history
+                history.insert(id.to_string(), HistoryEntry {
+                    request: ProxyEvent {
+                        id,
+                        script_id: 0,
+                        timestamp: event.timestamp,
+                        method: event.method.clone(),
+                        uri: event.uri.clone(),
+                        headers: Vec::new(),
+                        is_response: false,
+                        status: None,
+                        body: None,
+                    },
+                    response: Some(event.clone()),
+                });
+            }
         }
 
         self.emit_event(event).await;
@@ -498,7 +544,7 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
                         }
                     }
 
-                    if let Some(h) = result.headers {
+                    if let Some(h) = result.headers.clone() {
                         res_parts.headers.clear();
                         for (k, v) in h {
                             if let (Ok(name), Ok(val)) = (
@@ -511,7 +557,7 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
                     }
 
                     let modified = result.body.is_some();
-                    let final_bytes = result.body.unwrap_or(body_bytes);
+                    let final_bytes = result.body.clone().unwrap_or(body_bytes);
                     if modified {
                         // Remove encoding/length/integrity headers as they are now invalid
                         res_parts.headers.remove(header::CONTENT_ENCODING);
@@ -521,6 +567,24 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
                         }
                         res_parts.headers.remove(header::ETAG);
                         res_parts.headers.insert(header::CONTENT_LENGTH, header::HeaderValue::from(final_bytes.len()));
+                    }
+
+                    // Update history with script modifications for detached windows
+                    {
+                        let mut history = self.state.history.lock().await;
+                        if let Some(entry) = history.get_mut(&id.to_string()) {
+                            if let Some(res_event) = entry.response.as_mut() {
+                                if let Some(new_headers) = result.headers.as_ref() {
+                                    res_event.headers = new_headers.clone();
+                                }
+                                if let Some(new_body) = result.body.as_ref() {
+                                    res_event.body = Some(new_body.clone());
+                                }
+                                if let Some(new_status) = result.status {
+                                    res_event.status = Some(new_status);
+                                }
+                            }
+                        }
                     }
                     
                     Response::from_parts(

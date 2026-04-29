@@ -6,15 +6,19 @@
   import type { ProxyEvent } from "$lib/types";
 
   let id = $derived(page.url.searchParams.get("id"));
-  let event = $state<ProxyEvent | null>(null);
+  let req = $state<ProxyEvent | null>(null);
+  let res = $state<ProxyEvent | null>(null);
   let error = $state("");
 
   async function loadEvent() {
     if (!id) return;
     try {
-      event = await taurpc.get_event_by_id(id) as any;
-      if (!event) {
+      const entry = await taurpc.get_event_by_id(id) as any;
+      if (!entry) {
         error = "Request not found in history cache.";
+      } else {
+        req = entry.request;
+        res = entry.response;
       }
     } catch (e: any) {
       error = "Failed to load request: " + e;
@@ -47,8 +51,8 @@
     <div class="flex items-center gap-2">
       <div class="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></div>
       <span class="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Detached Inspector</span>
-      {#if event}
-        <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-white/5 font-mono border border-slate-200 dark:border-white/10 text-slate-500">ID: {event.id}</span>
+      {#if req}
+        <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-white/5 font-mono border border-slate-200 dark:border-white/10 text-slate-500">ID: {req.id}</span>
       {/if}
     </div>
   </div>
@@ -67,7 +71,7 @@
           </button>
         </div>
       </div>
-    {:else if !event}
+    {:else if !req}
       <div class="absolute inset-0 flex items-center justify-center">
         <div class="flex flex-col items-center gap-3">
           <div class="w-8 h-8 border-2 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin"></div>
@@ -75,7 +79,7 @@
         </div>
       </div>
     {:else}
-      <Inspector req={event} res={null} logs={[]} />
+      <Inspector {req} {res} logs={[]} />
     {/if}
   </div>
 </div>

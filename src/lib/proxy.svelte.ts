@@ -234,14 +234,7 @@ export class ProxyState {
     const win = getCurrentWindow();
     const isMain = win.label === "main";
 
-    await taurpc.events.proxy_event.on(async (e) => {
-      // Map from TauRPC's generated ProxyEvent (number[] body) to our internal ProxyEvent (Uint8Array body)
-      const event: ProxyEvent = {
-        ...e,
-        body: e.body ? new Uint8Array(e.body) : null,
-        headers: e.headers as [string, string][]
-      };
-
+    await taurpc.events.proxy_event.on(async (event: ProxyEvent) => {
       const id = String(event.id);
 
       // Update maps and times
@@ -268,19 +261,22 @@ export class ProxyState {
           const result = await this.scripts.runScripts(event, event.is_response);
 
           // Update the local event with script modifications so the UI reflects changes
-          if (result.body !== null) event.body = new Uint8Array(result.body);
-          if (result.headers) event.headers = result.headers;
-          if (result.uri) event.uri = result.uri;
-          if (result.status !== undefined && result.status !== null) event.status = result.status;
+          const updatedEvent = {
+            ...event,
+            body: result.body != null ? result.body : event.body,
+            headers: result.headers != null ? result.headers : event.headers,
+            uri: result.uri != null ? result.uri : event.uri,
+            status: result.status != null ? result.status : event.status,
+          };
 
-          // Re-set in map to trigger reactivity if properties were modified
+          // Re-set in map to trigger reactivity
           if (event.is_response) {
-            this.resMap.set(id, { ...event });
+            this.resMap.set(id, updatedEvent);
           } else {
-            this.reqMap.set(id, { ...event });
+            this.reqMap.set(id, updatedEvent);
           }
 
-          await taurpc.scripts.submit_script_result(event.script_id, result as any);
+          await taurpc.scripts.submit_script_result(event.script_id, result);
         } catch (err) {
           console.error(`[Proxy] Script runtime error for event ${id}:`, err);
           await taurpc.scripts.submit_script_result(event.script_id, {

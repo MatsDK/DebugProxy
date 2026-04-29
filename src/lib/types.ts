@@ -1,26 +1,12 @@
-export type ProxyEvent = {
-  id: string;
-  script_id: string;
-  timestamp: string;
-  method: string;
-  uri: string;
-  headers: [string, string][];
-  is_response: boolean;
-  status: number | null;
-  body: Uint8Array | null;
-  
-  // Script helpers
+import type { ProxyEvent as GeneratedProxyEvent, ScriptResult as GeneratedScriptResult } from "./bindings";
+
+export type ProxyEvent = GeneratedProxyEvent & {
+  // Script helpers added at runtime
   json?: any;
 };
 
-export type ScriptResult = {
-  headers?: [string, string][];
-  body?: number[] | null;
-  status?: number | null;
-  uri?: string | null;
-  dropped: boolean;
-  
-  // Script helpers
+export type ScriptResult = GeneratedScriptResult & {
+  // Script helpers added at runtime
   json?: any;
 };
 
@@ -35,4 +21,3 @@ export type ScriptLog = {
 };
 
 export type CtxMenu = { x: number; y: number; id: string } | null;
-

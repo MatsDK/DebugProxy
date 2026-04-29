@@ -654,7 +654,7 @@ async function formatEditableResBody() {
         class="h-1 bg-transparent hover:bg-indigo-500/30 cursor-row-resize shrink-0 transition-colors border-t border-slate-200 dark:border-[#30363d]"
       />
       <Pane
-        defaultSize={50}
+        defaultSize={30}
         minSize={20}
         class="flex flex-col bg-slate-50/50 dark:bg-black/20 overflow-hidden"
       >

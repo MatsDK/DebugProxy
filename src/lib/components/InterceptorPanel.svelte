@@ -21,6 +21,17 @@
     }
   });
 
+  // Fetch original request if missing (for response breakpoints in new windows)
+  $effect(() => {
+    if (activeBreakpoint?.type === 'response' && selectedId && !proxy.reqMap.has(selectedId)) {
+      taurpc.get_event_by_id(selectedId).then((entry: any) => {
+        if (entry?.request) {
+          proxy.reqMap.set(selectedId!, entry.request);
+        }
+      });
+    }
+  });
+
   function resume(id: string) {
     const bp = breakpointState.active.get(id);
     if (bp) {

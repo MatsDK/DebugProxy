@@ -22,7 +22,7 @@ pub trait Api {
     async fn stop_proxy() -> Result<(), String>;
     async fn is_blocked() -> Result<bool, String>;
     async fn toggle_blocked(enabled: bool) -> Result<(), String>;
-    async fn get_event_by_id(id: String) -> Result<Option<ProxyEvent>, String>;
+    async fn get_event_by_id(id: String) -> Result<Option<crate::proxy::HistoryEntry>, String>;
     async fn open_detached_window(label: String, title: String, url: String) -> Result<(), String>;
     async fn get_settings() -> Result<AppSettings, String>;
     async fn save_settings(settings: AppSettings) -> Result<(), String>;
@@ -277,7 +277,7 @@ impl Api for ApiImpl {
         }
     }
 
-    async fn get_event_by_id(self, id: String) -> Result<Option<ProxyEvent>, String> {
+    async fn get_event_by_id(self, id: String) -> Result<Option<crate::proxy::HistoryEntry>, String> {
         let history = self.state.history.lock().await;
         Ok(history.get(&id).cloned())
     }
