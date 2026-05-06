@@ -45,15 +45,16 @@ A MITM proxy for intercepting and modifying HTTP/HTTPS traffic.
    - Enter your computer's IP and the proxy port (default: `8080`).
 
 2. **Install Certificate**:
-   - Ensure the DebugProxy is running on your computer. You should be able to see `CONNECT` requests from your mobile device in the traffic history.
-   - Open a browser on your mobile device and navigate to `http://proxy.local`.
-   - Download the CA certificate.
+   - Ensure the DebugProxy is running on your computer.
+   - Open a browser on your mobile device and navigate to `http://<YOUR_COMPUTER_IP>:8080/proxy.local`.
+   - **Note for iOS**: If `http://proxy.local` does not load, you **must** use the computer's IP address directly with the port.
+   - Click "Download Certificate" on the landing page.
 
 3. **Trust the Certificate**:
    - **iOS**: 
      1. Open the downloaded profile in *Settings > Profile Downloaded* and click **Install**.
      2. Go to *Settings > General > About > Certificate Trust Settings*. 
-     3. Enable full trust for "DebugProxy CA".
+     3. Enable full trust for **Debug Proxy Root CA**.
    - **Android**: Go to *Settings > Security > Advanced > Encryption & credentials > Install from storage > CA certificate*. Select the downloaded file.
 
 ## Planned Features

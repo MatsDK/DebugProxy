@@ -246,13 +246,68 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
         }
         self.request_uri = Some(absolute_uri.clone());
 
-        if uri.contains("proxy.local") || uri == "/proxy.local" {
+        let host_header = headers.iter().find(|(k, _)| k.to_lowercase() == "host").map(|(_, v)| v.as_str()).unwrap_or("");
+        // Detect direct hits (e.g., http://192.168.1.5:8080/) which don't have a remote domain
+        let is_ip_host = host_header.chars().all(|c| c.is_numeric() || c == '.' || c == ':') || host_header.contains("localhost") || host_header.contains("127.0.0.1");
+        let is_proxy_control_path = absolute_uri.contains("proxy.local") || uri == "/proxy.local" || (is_ip_host && uri == "/");
+
+        if is_proxy_control_path {
+            if uri.ends_with("/cert") || uri.ends_with("/ca.crt") {
+                return RequestOrResponse::Response(
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header("Content-Type", "application/x-x509-ca-cert")
+                        .header("Content-Disposition", "attachment; filename=debug_proxy_ca.crt")
+                        .body(Body::from(self.ca_cert_pem_cache.clone()))
+                        .unwrap(),
+                );
+            }
+
+            let html = format!(r#"
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Debug Proxy - Setup</title>
+                    <meta name="viewport" content="width=device-width, initial-scale=1">
+                    <style>
+                        body {{ font-family: -apple-system, system-ui, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f8fafc; color: #1e293b; padding: 1rem; box-sizing: border-box; }}
+                        .card {{ background: white; padding: 2rem; border-radius: 1rem; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); text-align: center; max-width: 450px; width: 100%; }}
+                        h1 {{ font-size: 1.5rem; margin-bottom: 0.5rem; color: #4f46e5; }}
+                        p {{ font-size: 0.875rem; color: #64748b; margin-bottom: 1.5rem; line-height: 1.5; }}
+                        .btn {{ display: inline-block; background: #4f46e5; color: white; padding: 0.75rem 1.5rem; border-radius: 0.5rem; text-decoration: none; font-weight: bold; transition: background 0.2s; margin-bottom: 2rem; }}
+                        .btn:hover {{ background: #4338ca; }}
+                        .info {{ background: #f1f5f9; padding: 1rem; border-radius: 0.5rem; text-align: left; font-size: 0.75rem; }}
+                        .info h2 {{ font-size: 0.75rem; margin-top: 0; text-transform: uppercase; letter-spacing: 0.05em; color: #475569; }}
+                        code {{ background: #e2e8f0; padding: 0.2rem 0.4rem; border-radius: 0.25rem; font-family: monospace; }}
+                        ul {{ padding-left: 1.25rem; margin-bottom: 0; }}
+                        li {{ margin-bottom: 0.5rem; }}
+                    </style>
+                </head>
+                <body>
+                    <div class="card">
+                        <h1>Debug Proxy</h1>
+                        <p>To intercept HTTPS traffic, you need to install and trust the Root CA certificate on this device.</p>
+                        
+                        <a href="/proxy.local/cert" class="btn">Download Certificate</a>
+
+                        <div class="info">
+                            <h2>Important: Connection & Ports</h2>
+                            <ul>
+                                <li><strong>Browsing through proxy:</strong> If your Wi-Fi is already configured to use the proxy, just visit <code>http://proxy.local</code> (no port needed).</li>
+                                <li><strong>Direct download:</strong> If you haven't set up the proxy yet, use your computer's IP and port (e.g., <code>http://192.168.1.5:8080/proxy.local</code>).</li>
+                                <li><strong>Trust the CA:</strong> On iOS, go to <em>Settings > General > About > Certificate Trust Settings</em> and enable full trust for <strong>Debug Proxy Root CA</strong>.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </body>
+                </html>
+            "#);
+
             return RequestOrResponse::Response(
                 Response::builder()
                     .status(StatusCode::OK)
-                    .header("Content-Type", "application/x-x509-ca-cert")
-                    .header("Content-Disposition", "attachment; filename=debug_proxy_ca.crt")
-                    .body(Body::from(self.ca_cert_pem_cache.clone()))
+                    .header("Content-Type", "text/html")
+                    .body(Body::from(html))
                     .unwrap(),
             );
         }
