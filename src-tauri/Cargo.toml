@@ -1,6 +1,6 @@
 [package]
 name = "debug_proxy"
-version = "0.1.0"
+version = "0.1.1"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -37,6 +37,8 @@ flate2 = "1"
 rfd = "0.15"
 
 taurpc = "0.7.1"
+
+openssl = { version = "0.10", features = ["vendored"] }
 
 specta = { version = "=2.0.0-rc.22", features = ["derive"] }
 specta-typescript = "0.0.9"
