@@ -197,7 +197,7 @@
         el?.focus();
         el?.select();
       },
-      { ctrl: true, global: true },
+      { ctrl: true, global: true, description: "Focus URL filter" },
     )
     .bind(
       "k",
@@ -205,7 +205,7 @@
         proxy.clearTraffic();
         displayLimit = 200;
       },
-      { ctrl: true, global: true },
+      { ctrl: true, global: true, description: "Clear traffic" },
     )
     .bind(
       "j",
@@ -225,7 +225,11 @@
           );
         }
       },
-      { ctrl: true, global: true },
+      {
+        ctrl: true,
+        global: true,
+        description: "Select first request (if none selected)",
+      },
     )
     .bind(
       "Escape",
@@ -237,7 +241,7 @@
           selectedId = null;
         }
       },
-      { global: true },
+      { global: true, description: "Unselect request / Blur input" },
     )
     .bind("ArrowUp", () => {
       if (!selectedId || filteredIds.length === 0) return;
@@ -251,7 +255,7 @@
             ?.scrollIntoView({ block: "nearest" }),
         0,
       );
-    })
+    }, { description: "Previous request" })
     .bind("ArrowDown", () => {
       if (!selectedId || filteredIds.length === 0) return;
       const idx = filteredIds.indexOf(selectedId);
@@ -264,7 +268,7 @@
             ?.scrollIntoView({ block: "nearest" }),
         0,
       );
-    });
+    }, { description: "Next request" });
 
   let activeTab = $state<"requests" | "scripts" | "interceptors">("requests");
 
@@ -428,7 +432,7 @@
 
     <!-- Utils -->
     <div class="flex items-center gap-1 shrink-0 font-sans">
-      <SettingsDropdown {proxy} />
+      <SettingsDropdown {proxy} {keymap} />
     </div>
   </header>
 

@@ -2,6 +2,7 @@ type KeyBinding = {
   key: string;
   ctrl?: boolean;
   shift?: boolean;
+  description?: string;
   /** If true, fires even when an input/textarea is focused */
   global?: boolean;
   action: (e: KeyboardEvent) => void;
@@ -16,9 +17,22 @@ export class Keymap {
   }
 
   /** Register a keybinding. Returns `this` for chaining. */
-  bind(key: string, action: (e: KeyboardEvent) => void, opts?: { ctrl?: boolean; shift?: boolean; global?: boolean }): this {
+  bind(
+    key: string,
+    action: (e: KeyboardEvent) => void,
+    opts?: {
+      ctrl?: boolean;
+      shift?: boolean;
+      global?: boolean;
+      description?: string;
+    },
+  ): this {
     this.bindings.push({ key, action, ...opts });
     return this;
+  }
+
+  getBindings() {
+    return this.bindings.filter((b) => b.description);
   }
 
   /** Attach the keydown listener to the document. Call in onMount. */

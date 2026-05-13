@@ -69,6 +69,7 @@ A MITM proxy for intercepting and modifying HTTP/HTTPS traffic.
 - [ ] **Protobuf Support**: Automatic decoding/encoding for gRPC traffic.
 - [ ] **Session Export**: Save and load captured traffic sessions (HAR format support).
 - [ ] **Device Management** 
+- [ ] **Desktop Proxy**
 
 ## Contributing
 

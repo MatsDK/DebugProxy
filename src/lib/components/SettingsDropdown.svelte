@@ -14,13 +14,17 @@
     ChevronDown,
     ExternalLink,
     Shield,
+    Keyboard,
   } from "lucide-svelte";
   import SslSettingsModal from "./SslSettingsModal.svelte";
+  import KeymapModal from "./KeymapModal.svelte";
+  import type { Keymap } from "$lib/keymap.svelte";
 
-  let { proxy }: { proxy: ProxyState } = $props();
+  let { proxy, keymap }: { proxy: ProxyState; keymap: Keymap } = $props();
 
   let isOpen = $state(false);
   let isSslSettingsOpen = $state(false);
+  let isKeymapOpen = $state(false);
   let el = $state<HTMLElement | null>(null);
 
   function toggle() {
@@ -55,7 +59,7 @@
         theme: proxy.isDark ? "dark" : "light",
         scripts: $state.snapshot(proxy.scripts.list),
         scriptsEnabled: proxy.scripts.enabled,
-      };
+      } satisfies AppSettings;
       await taurpc.export_settings(settings);
       toast.success("Settings exported");
       close();
@@ -223,6 +227,20 @@
           >
         </button>
 
+        <button
+          onclick={() => {
+            isKeymapOpen = true;
+            close();
+          }}
+          class="w-full flex items-center gap-2 px-2 py-1.5 text-left hover:bg-slate-50 dark:hover:bg-white/5 rounded transition-colors group"
+        >
+          <Keyboard size={14} class="text-slate-400 group-hover:text-indigo-500" />
+          <span
+            class="text-[11px] font-medium text-slate-600 dark:text-slate-300"
+            >Shortcuts</span
+          >
+        </button>
+
         <div class="h-px bg-slate-100 dark:bg-[#30363d] my-1 mx-1"></div>
 
         <!-- Backup & Restore -->
@@ -300,4 +318,10 @@
   {proxy}
   isOpen={isSslSettingsOpen}
   onClose={() => (isSslSettingsOpen = false)}
+/>
+
+<KeymapModal
+  {keymap}
+  isOpen={isKeymapOpen}
+  onClose={() => (isKeymapOpen = false)}
 />

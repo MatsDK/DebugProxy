@@ -4,6 +4,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { ProxyEvent, ScriptLog } from "$lib/types";
 import { ScriptsState } from "./scripts.svelte";
 
+const MAX_LOGS = 2000;
+
 export class ProxyState {
   ip = $state("Detecting...");
   port = $state(8080);
@@ -55,7 +57,7 @@ export class ProxyState {
       message: msg,
       timestamp: Date.now(),
     });
-    if (this.scriptLogs.length > 2000) this.scriptLogs.shift();
+    if (this.scriptLogs.length > MAX_LOGS) this.scriptLogs.shift();
   }
 
   async init() {
@@ -244,8 +246,19 @@ export class ProxyState {
         if (!this.idSet.has(id)) {
           this.idSet.add(id);
           this.orderedIds.push(id);
+
+          if (this.orderedIds.length > MAX_LOGS) {
+            const oldId = this.orderedIds.shift();
+            if (oldId) {
+              this.idSet.delete(oldId);
+              this.reqMap.delete(oldId);
+              this.resMap.delete(oldId);
+              this.reqTime.delete(oldId);
+              this.resTime.delete(oldId);
+            }
+          }
         }
-      } else {
+      } else if (this.idSet.has(id)) {
         this.resMap.set(id, event);
         this.resTime.set(id, Number(event.timestamp));
       }
