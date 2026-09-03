@@ -2,6 +2,7 @@ import { SvelteMap } from "svelte/reactivity";
 import { taurpc } from "./rpc";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { ProxyEvent, ScriptLog } from "$lib/types";
+import type { HistoryEntry } from "$lib/bindings";
 import { ScriptsState } from "./scripts.svelte";
 
 const MAX_LOGS = 2000;
@@ -229,6 +230,35 @@ export class ProxyState {
     this.resMap.clear();
     this.reqTime.clear();
     this.resTime.clear();
+  }
+
+  /** Merges HAR-imported request/response pairs into the traffic list, oldest first. */
+  importHar(entries: HistoryEntry[]) {
+    const sorted = [...entries].sort((a, b) => Number(a.request.timestamp) - Number(b.request.timestamp));
+    for (const { request, response } of sorted) {
+      const id = String(request.id);
+      if (this.idSet.has(id)) continue;
+
+      this.idSet.add(id);
+      this.orderedIds.push(id);
+      this.reqMap.set(id, request);
+      this.reqTime.set(id, Number(request.timestamp));
+      if (response) {
+        this.resMap.set(id, response);
+        this.resTime.set(id, Number(response.timestamp));
+      }
+    }
+
+    while (this.orderedIds.length > MAX_LOGS) {
+      const oldId = this.orderedIds.shift();
+      if (oldId) {
+        this.idSet.delete(oldId);
+        this.reqMap.delete(oldId);
+        this.resMap.delete(oldId);
+        this.reqTime.delete(oldId);
+        this.resTime.delete(oldId);
+      }
+    }
   }
 
   private async setupListeners() {

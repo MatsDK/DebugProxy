@@ -2,11 +2,13 @@
 use http_body_util::Full;
 use hudsucker::{
     hyper::{body::Bytes, header, Request, Response, StatusCode},
-    Body, HttpContext, HttpHandler, RequestOrResponse,
+    tokio_tungstenite::tungstenite::Message,
+    Body, HttpContext, HttpHandler, RequestOrResponse, WebSocketContext, WebSocketHandler,
 };
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -45,6 +47,22 @@ pub struct ProxyEvent {
     pub is_response: bool,
     pub status: Option<u16>,
     pub body: Option<Vec<u8>>,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, specta::Type, Debug)]
+pub struct WsFrameEvent {
+    /// The `id` of the ProxyEvent for the upgrade request this frame belongs to.
+    #[serde(serialize_with = "serialize_u64_as_string", deserialize_with = "deserialize_u64_from_string")]
+    #[specta(type = String)]
+    pub connection_id: u64,
+    #[serde(serialize_with = "serialize_u64_as_string", deserialize_with = "deserialize_u64_from_string")]
+    #[specta(type = String)]
+    pub timestamp: u64,
+    /// "outgoing" (client -> server) or "incoming" (server -> client)
+    pub direction: String,
+    /// "text" | "binary" | "ping" | "pong" | "close"
+    pub opcode: String,
+    pub body: Vec<u8>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, specta::Type)]
@@ -86,6 +104,9 @@ pub struct ProxyState {
     pub app_handle: Arc<std::sync::Mutex<Option<AppHandle>>>,
     /// Patterns for hosts that should bypass SSL decryption
     pub ssl_exception_patterns: Arc<std::sync::RwLock<Vec<Regex>>>,
+    /// Maps a client's socket address to the ProxyEvent id of its WebSocket upgrade request,
+    /// so frames captured later (which only carry socket addresses) can be tied back to it.
+    pub ws_connections: Arc<Mutex<HashMap<SocketAddr, u64>>>,
 }
 
 impl Default for ProxyState {
@@ -106,6 +127,7 @@ impl Default for ProxyState {
             history: Arc::new(Mutex::new(HashMap::new())),
             app_handle: Arc::new(std::sync::Mutex::new(None)),
             ssl_exception_patterns: Arc::new(std::sync::RwLock::new(Vec::new())),
+            ws_connections: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -163,6 +185,14 @@ impl<R: Runtime> ProxyHandler<R> {
         body.collect().await.map(|c| c.to_bytes().to_vec()).unwrap_or_default()
     }
 
+    fn is_websocket_upgrade(headers: &[(String, String)]) -> bool {
+        headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("upgrade"))
+            .map(|(_, v)| v.eq_ignore_ascii_case("websocket"))
+            .unwrap_or(false)
+    }
+
     fn decompress_body(headers: &[(String, String)], body: &[u8]) -> Vec<u8> {
         let encoding = headers.iter()
             .find(|(k, _)| k.to_lowercase() == "content-encoding")
@@ -200,7 +230,7 @@ impl<R: Runtime> ProxyHandler<R> {
 impl<R: Runtime> HttpHandler for ProxyHandler<R> {
     async fn handle_request(
         &mut self,
-        _ctx: &HttpContext,
+        ctx: &HttpContext,
         req: Request<Body>,
     ) -> RequestOrResponse {
         if self.state.is_blocked.load(Ordering::Relaxed) {
@@ -226,6 +256,13 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
             .collect();
+
+        if Self::is_websocket_upgrade(&headers) {
+            // The handler that will process this connection's frames only sees a
+            // SocketAddr, not the request, so stash this request's `id` under the
+            // client's address to correlate frames back to this upgrade later.
+            self.state.ws_connections.lock().await.insert(ctx.client_addr, id);
+        }
 
         self.request_id = Some(id);
         self.request_timestamp = Some(timestamp);
@@ -682,5 +719,57 @@ impl<R: Runtime> HttpHandler for ProxyHandler<R> {
         }
 
         true
+    }
+}
+
+impl<R: Runtime> WebSocketHandler for ProxyHandler<R> {
+    async fn handle_message(&mut self, ctx: &WebSocketContext, message: Message) -> Option<Message> {
+        if self.state.is_blocked.load(Ordering::Relaxed) {
+            return None;
+        }
+
+        let client_addr = match ctx {
+            WebSocketContext::ClientToServer { src, .. } => *src,
+            WebSocketContext::ServerToClient { dst, .. } => *dst,
+        };
+        let direction = match ctx {
+            WebSocketContext::ClientToServer { .. } => "outgoing",
+            WebSocketContext::ServerToClient { .. } => "incoming",
+        };
+
+        let connection_id = {
+            let connections = self.state.ws_connections.lock().await;
+            match connections.get(&client_addr) {
+                Some(id) => *id,
+                // Should always be set by handle_request's upgrade detection, but fall back
+                // to a fresh id rather than dropping the frame if it's somehow missing.
+                None => self.state.next_id.fetch_add(1, Ordering::Relaxed),
+            }
+        };
+
+        let (opcode, body) = match &message {
+            Message::Text(text) => ("text", text.as_bytes().to_vec()),
+            Message::Binary(data) => ("binary", data.to_vec()),
+            Message::Ping(data) => ("ping", data.to_vec()),
+            Message::Pong(data) => ("pong", data.to_vec()),
+            Message::Close(_) => {
+                self.state.ws_connections.lock().await.remove(&client_addr);
+                ("close", Vec::new())
+            }
+            Message::Frame(_) => return Some(message),
+        };
+
+        let event = WsFrameEvent {
+            connection_id,
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64,
+            direction: direction.to_string(),
+            opcode: opcode.to_string(),
+            body,
+        };
+
+        let trigger = crate::procs::AppEvents::new(self.app_handle.clone());
+        let _ = trigger.ws_frame(event);
+
+        Some(message)
     }
 }

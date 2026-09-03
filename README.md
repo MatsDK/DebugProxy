@@ -63,11 +63,11 @@ A MITM proxy for intercepting and modifying HTTP/HTTPS traffic.
 
 ## Planned Features
 
-- [ ] **TypeScript Scripting**: Type-safe request/response modification.
+- [x] **TypeScript Scripting**: Type-safe request/response modification.
 - [ ] **VPN Mode**: System-wide proxying via local VPN interface.
 - [ ] **WebSocket Support**: Intercept and modify WS/WSS frames.
 - [ ] **Protobuf Support**: Automatic decoding/encoding for gRPC traffic.
-- [ ] **Session Export**: Save and load captured traffic sessions (HAR format support).
+- [x] **Session Export**: Save and load captured traffic sessions (HAR format support).
 - [ ] **Device Management** 
 - [ ] **Desktop Proxy**
 

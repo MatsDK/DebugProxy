@@ -7,7 +7,7 @@ use tauri::Runtime;
 
 use crate::{
     cert::load_or_create_ca,
-    proxy::{ProxyEvent, ProxyHandler, ProxyState, ScriptResult},
+    proxy::{ProxyEvent, ProxyHandler, ProxyState, ScriptResult, WsFrameEvent},
     settings::{AppSettings, SettingsManager},
 };
 
@@ -30,6 +30,7 @@ pub trait Api {
     async fn export_settings(settings: AppSettings) -> Result<(), String>;
     async fn export_ca_cert() -> Result<(), String>;
     async fn export_har() -> Result<(), String>;
+    async fn import_har() -> Result<Option<Vec<crate::proxy::HistoryEntry>>, String>;
     async fn reset_settings() -> Result<AppSettings, String>;
     async fn broadcast_theme(is_dark: bool) -> Result<(), String>;
     async fn emit_breakpoint_hit(id: String, bp_type: String, event: ProxyEvent) -> Result<(), String>;
@@ -48,6 +49,9 @@ pub trait Scripts {
 pub trait Events {
     #[taurpc(event)]
     async fn proxy_event(event: ProxyEvent);
+
+    #[taurpc(event)]
+    async fn ws_frame(event: WsFrameEvent);
 
     #[taurpc(event)]
     async fn window_closed(label: String);
@@ -134,7 +138,8 @@ impl Api for ApiImpl {
             .with_addr(SocketAddr::from(([0, 0, 0, 0], port)))
             .with_ca(ca)
             .with_rustls_connector(rustls::crypto::ring::default_provider())
-            .with_http_handler(handler)
+            .with_http_handler(handler.clone())
+            .with_websocket_handler(handler)
             .with_graceful_shutdown(async move {
                 rx.await.ok();
             })
@@ -293,6 +298,33 @@ impl Api for ApiImpl {
             std::fs::write(path.path(), json).map_err(|e| e.to_string())?;
         }
         Ok(())
+    }
+
+    async fn import_har(self) -> Result<Option<Vec<crate::proxy::HistoryEntry>>, String> {
+        let file = rfd::AsyncFileDialog::new()
+            .add_filter("HAR", &["har"])
+            .pick_file()
+            .await;
+
+        let Some(path) = file else { return Ok(None) };
+        let content = std::fs::read_to_string(path.path()).map_err(|e| e.to_string())?;
+        let har: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+        let entries = har["log"]["entries"]
+            .as_array()
+            .ok_or("Invalid HAR file: missing log.entries")?;
+
+        let mut history = self.state.history.lock().await;
+        let imported: Vec<crate::proxy::HistoryEntry> = entries
+            .iter()
+            .map(|entry| {
+                let id = self.state.next_id.fetch_add(1, Ordering::Relaxed);
+                let entry = har_entry_to_history_entry(id, entry);
+                history.insert(id.to_string(), entry.clone());
+                entry
+            })
+            .collect();
+
+        Ok(Some(imported))
     }
 
     async fn reset_settings(self) -> Result<AppSettings, String> {
@@ -500,6 +532,56 @@ fn history_entry_to_har(entry: &crate::proxy::HistoryEntry) -> serde_json::Value
         "cache": {},
         "timings": { "send": 0, "wait": 0, "receive": 0 },
     })
+}
+
+fn har_headers_from_json(headers: &serde_json::Value) -> Vec<(String, String)> {
+    headers
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|h| Some((h["name"].as_str()?.to_string(), h["value"].as_str()?.to_string())))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn har_entry_to_history_entry(id: u64, entry: &serde_json::Value) -> crate::proxy::HistoryEntry {
+    let timestamp = entry["startedDateTime"]
+        .as_str()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.timestamp_millis() as u64)
+        .unwrap_or(0);
+
+    let req = &entry["request"];
+    let method = req["method"].as_str().unwrap_or("GET").to_string();
+    let uri = req["url"].as_str().unwrap_or("").to_string();
+
+    let request = crate::proxy::ProxyEvent {
+        id,
+        script_id: 0,
+        timestamp,
+        method: method.clone(),
+        uri: uri.clone(),
+        headers: har_headers_from_json(&req["headers"]),
+        is_response: false,
+        status: None,
+        body: req["postData"]["text"].as_str().map(|s| s.as_bytes().to_vec()),
+    };
+
+    let resp = &entry["response"];
+    let response = resp["status"].as_u64().filter(|s| *s > 0).map(|status| crate::proxy::ProxyEvent {
+        id,
+        script_id: 0,
+        timestamp,
+        method,
+        uri,
+        headers: har_headers_from_json(&resp["headers"]),
+        is_response: true,
+        status: Some(status as u16),
+        body: resp["content"]["text"].as_str().filter(|s| !s.is_empty()).map(|s| s.as_bytes().to_vec()),
+    });
+
+    crate::proxy::HistoryEntry { request, response }
 }
 
 fn wildcard_to_regex(pattern: &str) -> String {

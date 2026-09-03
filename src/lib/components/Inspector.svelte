@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ProxyEvent, ScriptLog } from "$lib/types";
+  import type { WsFrameEvent } from "$lib/bindings";
   import JsonViewer from "./JsonViewer.svelte";
   import { PaneGroup, Pane, PaneResizer } from "paneforge";
   import { taurpc } from "$lib/rpc";
@@ -15,6 +16,7 @@
     req,
     res: resProp,
     logs,
+    wsFrames = [],
     editable = false,
     showPopout = true,
     onAbort,
@@ -23,6 +25,7 @@
     req: ProxyEvent;
     res: ProxyEvent | null;
     logs: ScriptLog[];
+    wsFrames?: WsFrameEvent[];
     editable?: boolean;
     showPopout?: boolean;
     onAbort?: () => void;
@@ -31,6 +34,23 @@
 
   let res = $derived(resProp || (req.is_response ? req : null));
   let isResponseOnly = $derived(req.is_response && (!resProp || resProp === req));
+  let isWebSocketUpgrade = $derived(
+    req.headers.some(
+      ([k, v]) => k.toLowerCase() === "upgrade" && v.toLowerCase() === "websocket",
+    ),
+  );
+
+  function formatWsFrameBody(frame: WsFrameEvent): string {
+    if (frame.opcode === "close") return "Connection closed";
+    if (frame.opcode === "text") {
+      try {
+        return new TextDecoder().decode(new Uint8Array(frame.body));
+      } catch {
+        return "<invalid utf-8>";
+      }
+    }
+    return `<${frame.body.length} bytes>`;
+  }
 
   let reqTab = $state<"headers" | "body">("headers");
   let resTab = $state<"headers" | "body">("headers");
@@ -658,61 +678,65 @@ async function formatEditableResBody() {
         minSize={20}
         class="flex flex-col bg-slate-50/50 dark:bg-black/20 overflow-hidden"
       >
-        <div
-          class="h-8 bg-slate-100/50 dark:bg-[#1c2128] border-b border-slate-200 dark:border-[#30363d] flex items-center px-2 shrink-0"
-        >
-          <span
-            class="text-xs font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest"
-            >Script Logs</span
+        {#if isWebSocketUpgrade}
+          {@render wsFramesPanel("text-xs")}
+        {:else}
+          <div
+            class="h-8 bg-slate-100/50 dark:bg-[#1c2128] border-b border-slate-200 dark:border-[#30363d] flex items-center px-2 shrink-0"
           >
-          {#if scriptLogs.length > 0}
             <span
-              class="ml-2 px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 text-[9px] font-bold"
-              >{scriptLogs.length}</span
+              class="text-xs font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest"
+              >Script Logs</span
             >
-          {/if}
-        </div>
-        <div class="flex-1 overflow-y-auto p-2 space-y-1.5">
-          {#if scriptLogs.length === 0}
-            <div class="text-slate-400 italic text-[10px] py-10 text-center">
-              No script output.
-            </div>
-          {:else}
-            {#each scriptLogs as log}
-              <div
-                class="flex flex-col border-b border-black/5 dark:border-white/5 pb-1 last:border-0 border-slate-100 dark:border-white/5"
+            {#if scriptLogs.length > 0}
+              <span
+                class="ml-2 px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 text-[9px] font-bold"
+                >{scriptLogs.length}</span
               >
-                <div class="flex gap-2 items-baseline">
-                  <span class="text-slate-400 shrink-0 text-[10px] font-mono"
-                    >{new Date(log.timestamp)
-                      .toLocaleTimeString()
-                      ?.split(" ")[0]}</span
-                  >
-                  <span
-                    class="font-bold {log.level === 'error'
-                      ? 'text-red-500'
-                      : 'text-indigo-500'} uppercase text-[10px]"
-                  >
-                    {log.level}
-                  </span>
-                  {#if typeof log.message === "string"}
-                    <span
-                      class="text-xs font-mono text-slate-700 dark:text-slate-300 break-all leading-tight"
-                      >{log.message}</span
+            {/if}
+          </div>
+          <div class="flex-1 overflow-y-auto p-2 space-y-1.5">
+            {#if scriptLogs.length === 0}
+              <div class="text-slate-400 italic text-[10px] py-10 text-center">
+                No script output.
+              </div>
+            {:else}
+              {#each scriptLogs as log}
+                <div
+                  class="flex flex-col border-b border-black/5 dark:border-white/5 pb-1 last:border-0 border-slate-100 dark:border-white/5"
+                >
+                  <div class="flex gap-2 items-baseline">
+                    <span class="text-slate-400 shrink-0 text-[10px] font-mono"
+                      >{new Date(log.timestamp)
+                        .toLocaleTimeString()
+                        ?.split(" ")[0]}</span
                     >
+                    <span
+                      class="font-bold {log.level === 'error'
+                        ? 'text-red-500'
+                        : 'text-indigo-500'} uppercase text-[10px]"
+                    >
+                      {log.level}
+                    </span>
+                    {#if typeof log.message === "string"}
+                      <span
+                        class="text-xs font-mono text-slate-700 dark:text-slate-300 break-all leading-tight"
+                        >{log.message}</span
+                      >
+                    {/if}
+                  </div>
+                  {#if typeof log.message === "object"}
+                    <div
+                      class="mt-1 border border-black/5 dark:border-white/10 rounded overflow-hidden"
+                    >
+                      <JsonViewer data={log.message} />
+                    </div>
                   {/if}
                 </div>
-                {#if typeof log.message === "object"}
-                  <div
-                    class="mt-1 border border-black/5 dark:border-white/10 rounded overflow-hidden"
-                  >
-                    <JsonViewer data={log.message} />
-                  </div>
-                {/if}
-              </div>
-            {/each}
-          {/if}
-        </div>
+              {/each}
+            {/if}
+          </div>
+        {/if}
       </Pane>
     {:else}
       <Pane

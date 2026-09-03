@@ -134,6 +134,19 @@
     }
   }
 
+  async function importHar() {
+    try {
+      const entries = await taurpc.import_har();
+      if (entries && entries.length) {
+        proxy.importHar(entries);
+        toast.success(`Imported ${entries.length} request${entries.length === 1 ? "" : "s"}`);
+      }
+      close();
+    } catch (e: any) {
+      toast.error("Import failed: " + e);
+    }
+  }
+
   function clearHistory() {
     if (!confirm("Clear all captured traffic?")) return;
     proxy.clearTraffic();
@@ -210,6 +223,20 @@
           <span
             class="text-[11px] font-medium text-slate-600 dark:text-slate-300"
             >Download Root CA</span
+          >
+        </button>
+
+        <button
+          onclick={importHar}
+          class="w-full flex items-center gap-2 px-2 py-1.5 text-left hover:bg-slate-50 dark:hover:bg-white/5 rounded transition-colors group"
+        >
+          <FileUp
+            size={14}
+            class="text-slate-400 group-hover:text-emerald-500"
+          />
+          <span
+            class="text-[11px] font-medium text-slate-600 dark:text-slate-300"
+            >Import Session (HAR)...</span
           >
         </button>
 
