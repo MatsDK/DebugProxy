@@ -29,6 +29,7 @@ pub trait Api {
     async fn import_settings() -> Result<Option<AppSettings>, String>;
     async fn export_settings(settings: AppSettings) -> Result<(), String>;
     async fn export_ca_cert() -> Result<(), String>;
+    async fn export_har() -> Result<(), String>;
     async fn reset_settings() -> Result<AppSettings, String>;
     async fn broadcast_theme(is_dark: bool) -> Result<(), String>;
     async fn emit_breakpoint_hit(id: String, bp_type: String, event: ProxyEvent) -> Result<(), String>;
@@ -265,6 +266,35 @@ impl Api for ApiImpl {
         }
     }
 
+    async fn export_har(self) -> Result<(), String> {
+        let history = self.state.history.lock().await;
+        let mut entries: Vec<&crate::proxy::HistoryEntry> = history.values().collect();
+        entries.sort_by_key(|e| e.request.timestamp);
+
+        let har_entries: Vec<serde_json::Value> = entries.iter().map(|e| history_entry_to_har(e)).collect();
+        drop(history);
+
+        let har = serde_json::json!({
+            "log": {
+                "version": "1.2",
+                "creator": { "name": "DebugProxy", "version": env!("CARGO_PKG_VERSION") },
+                "entries": har_entries,
+            }
+        });
+
+        let file = rfd::AsyncFileDialog::new()
+            .add_filter("HAR", &["har"])
+            .set_file_name("session.har")
+            .save_file()
+            .await;
+
+        if let Some(path) = file {
+            let json = serde_json::to_string_pretty(&har).map_err(|e| e.to_string())?;
+            std::fs::write(path.path(), json).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
     async fn reset_settings(self) -> Result<AppSettings, String> {
         let default = AppSettings::default();
         let app_handle_opt = self.state.app_handle.lock().unwrap().clone();
@@ -395,6 +425,81 @@ impl Scripts for ScriptsImpl {
             Err("Request ID not found or already timed out".into())
         }
     }
+}
+
+fn har_headers(headers: &[(String, String)]) -> Vec<serde_json::Value> {
+    headers
+        .iter()
+        .map(|(k, v)| serde_json::json!({ "name": k, "value": v }))
+        .collect()
+}
+
+fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(name))
+        .map(|(_, v)| v.as_str())
+}
+
+fn har_content(event: &Option<crate::proxy::ProxyEvent>) -> (u16, Vec<serde_json::Value>, serde_json::Value, i64) {
+    match event {
+        Some(resp) => {
+            let body = resp.body.as_deref().unwrap_or(&[]);
+            let mime_type = header_value(&resp.headers, "content-type").unwrap_or("");
+            let content = serde_json::json!({
+                "size": body.len() as i64,
+                "mimeType": mime_type,
+                "text": String::from_utf8_lossy(body),
+            });
+            (resp.status.unwrap_or(0), har_headers(&resp.headers), content, body.len() as i64)
+        }
+        None => (0, Vec::new(), serde_json::json!({ "size": 0, "mimeType": "", "text": "" }), 0),
+    }
+}
+
+fn history_entry_to_har(entry: &crate::proxy::HistoryEntry) -> serde_json::Value {
+    let req = &entry.request;
+    let started_date_time = chrono::DateTime::from_timestamp_millis(req.timestamp as i64)
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_default();
+
+    let post_data = req.body.as_ref().map(|body| {
+        serde_json::json!({
+            "mimeType": header_value(&req.headers, "content-type").unwrap_or(""),
+            "text": String::from_utf8_lossy(body),
+        })
+    });
+
+    let (status, response_headers, content, response_body_size) = har_content(&entry.response);
+
+    serde_json::json!({
+        "startedDateTime": started_date_time,
+        "time": 0,
+        "request": {
+            "method": req.method,
+            "url": req.uri,
+            "httpVersion": "HTTP/1.1",
+            "cookies": [],
+            "headers": har_headers(&req.headers),
+            "queryString": [],
+            "postData": post_data,
+            "headersSize": -1,
+            "bodySize": req.body.as_ref().map(|b| b.len() as i64).unwrap_or(-1),
+        },
+        "response": {
+            "status": status,
+            "statusText": "",
+            "httpVersion": "HTTP/1.1",
+            "cookies": [],
+            "headers": response_headers,
+            "content": content,
+            "redirectURL": "",
+            "headersSize": -1,
+            "bodySize": response_body_size,
+        },
+        "cache": {},
+        "timings": { "send": 0, "wait": 0, "receive": 0 },
+    })
 }
 
 fn wildcard_to_regex(pattern: &str) -> String {

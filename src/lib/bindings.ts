@@ -16,10 +16,11 @@ export type ScriptConfig = { id: string; name: string; pattern: string; descript
 
 export type ScriptResult = { headers: ([string, string])[] | null; uri: string | null; status: number | null; body: number[] | null; dropped: boolean }
 
-const ARGS_MAP = { '':'{"broadcast_theme":["is_dark"],"emit_breakpoint_hit":["id","bp_type","event"],"export_ca_cert":[],"export_settings":["settings"],"get_ca_cert":[],"get_event_by_id":["id"],"get_local_ip":[],"get_settings":[],"import_settings":[],"is_blocked":[],"is_ssl_intercept_enabled":[],"open_detached_window":["label","title","url"],"reset_settings":[],"save_settings":["settings"],"start_proxy":["port"],"stop_proxy":[],"submit_breakpoint_resolution":["id","modified_event"],"toggle_blocked":["enabled"],"toggle_ssl_intercept":["enabled"],"trigger_breakpoint_sync":[]}', 'events':'{"breakpoint_hit":["id","bp_type","event"],"breakpoint_resolved_signal":["id","modified_event"],"proxy_event":["event"],"sync_requested":[],"theme_changed":["is_dark"],"window_closed":["label"]}', 'scripts':'{"set_script_patterns":["patterns"],"submit_script_result":["script_id","result"],"toggle_scripting":["enabled"]}' }
+const ARGS_MAP = { '':'{"broadcast_theme":["is_dark"],"emit_breakpoint_hit":["id","bp_type","event"],"export_ca_cert":[],"export_har":[],"export_settings":["settings"],"get_ca_cert":[],"get_event_by_id":["id"],"get_local_ip":[],"get_settings":[],"import_settings":[],"is_blocked":[],"is_ssl_intercept_enabled":[],"open_detached_window":["label","title","url"],"reset_settings":[],"save_settings":["settings"],"start_proxy":["port"],"stop_proxy":[],"submit_breakpoint_resolution":["id","modified_event"],"toggle_blocked":["enabled"],"toggle_ssl_intercept":["enabled"],"trigger_breakpoint_sync":[]}', 'events':'{"breakpoint_hit":["id","bp_type","event"],"breakpoint_resolved_signal":["id","modified_event"],"proxy_event":["event"],"sync_requested":[],"theme_changed":["is_dark"],"window_closed":["label"]}', 'scripts':'{"set_script_patterns":["patterns"],"submit_script_result":["script_id","result"],"toggle_scripting":["enabled"]}' }
 export type Router = { "": {broadcast_theme: (isDark: boolean) => Promise<null>, 
 emit_breakpoint_hit: (id: string, bpType: string, event: ProxyEvent) => Promise<null>, 
 export_ca_cert: () => Promise<null>, 
+export_har: () => Promise<null>, 
 export_settings: (settings: AppSettings) => Promise<null>, 
 get_ca_cert: () => Promise<string | null>, 
 get_event_by_id: (id: string) => Promise<HistoryEntry | null>, 
