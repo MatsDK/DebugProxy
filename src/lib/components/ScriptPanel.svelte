@@ -8,7 +8,7 @@
   import ConfirmationModal from "$lib/components/ConfirmationModal.svelte";
   import { taurpc } from "$lib/rpc";
   import { toast } from "$lib/toast.svelte";
-  import { Trash2, Plus, Sparkles } from "lucide-svelte";
+  import { Trash2, Plus, Sparkles, Pencil } from "lucide-svelte";
   import * as prettier from "prettier/standalone";
   import * as babel from "prettier/plugins/babel";
   import * as estree from "prettier/plugins/estree";
@@ -20,6 +20,37 @@
   let selected = $derived(
     scripts.list.find((s: ScriptConfig) => s.id === selectedId) || null,
   );
+
+  let editingName = $state(false);
+  let nameDraft = $state("");
+  let nameInputEl = $state<HTMLInputElement | null>(null);
+
+  $effect(() => {
+    // Switching scripts (or the panel losing its selection) should never leave a stale edit open.
+    selectedId;
+    editingName = false;
+  });
+
+  function startEditingName() {
+    if (!selected) return;
+    nameDraft = selected.name;
+    editingName = true;
+  }
+
+  function commitNameEdit() {
+    if (selected) {
+      const trimmed = nameDraft.trim();
+      if (trimmed) selected.name = trimmed;
+    }
+    editingName = false;
+  }
+
+  $effect(() => {
+    if (editingName && nameInputEl) {
+      nameInputEl.focus();
+      nameInputEl.select();
+    }
+  });
 
   let searchTerm = $state("");
   let filteredScripts = $derived(
@@ -335,12 +366,39 @@
           class="h-10 px-4 border-b border-slate-200 dark:border-[#30363d] flex items-center justify-between bg-white dark:bg-[#0d1117] shrink-0"
         >
           <div class="flex-1 flex items-center min-w-0">
-            <input
-              id="center-script-name"
-              bind:value={selected.name}
-              class="bg-transparent border-none outline-none text-xs font-bold text-slate-700 dark:text-slate-200 w-full placeholder:text-slate-400 placeholder:font-normal"
-              placeholder="Script name..."
-            />
+            {#if editingName}
+              <input
+                id="center-script-name"
+                bind:this={nameInputEl}
+                bind:value={nameDraft}
+                onblur={commitNameEdit}
+                onkeydown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    commitNameEdit();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    editingName = false;
+                  }
+                }}
+                class="bg-transparent border-b border-indigo-500 outline-none text-sm font-bold text-slate-700 dark:text-slate-200 w-full"
+              />
+            {:else}
+              <button
+                type="button"
+                ondblclick={startEditingName}
+                title="Double-click to rename"
+                class="group flex items-center gap-1.5 min-w-0 max-w-full text-left border-b border-transparent hover:border-slate-300 dark:hover:border-slate-600 transition-colors cursor-text"
+              >
+                <span class="text-sm font-bold text-slate-700 dark:text-slate-200 truncate"
+                  >{selected.name}</span
+                >
+                <Pencil
+                  size={11}
+                  class="shrink-0 text-slate-300 dark:text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                />
+              </button>
+            {/if}
           </div>
           <div class="flex items-center gap-3 shrink-0 ml-4">
             <button
@@ -357,9 +415,17 @@
           </div>
         </div>
 
+        <div class="flex-1 relative overflow-hidden">
+          <CodeEditor
+            value={selected.code}
+            onchange={(val) => (selected.code = val)}
+            darkMode={isDark}
+          />
+        </div>
+
         {#if selected.compileError}
           <div
-            class="bg-red-50 dark:bg-red-950/30 border-b border-red-200 dark:border-red-500/30 px-3 py-2 shrink-0"
+            class="bg-red-50 dark:bg-red-950/30 border-t border-red-200 dark:border-red-500/30 px-3 py-2 shrink-0 max-h-32 overflow-y-auto"
           >
             <div class="flex items-center gap-2 text-red-600 dark:text-red-400">
               <svg
@@ -387,14 +453,6 @@
               class="mt-1 text-[10px] font-mono text-red-800 dark:text-red-300/80 whitespace-pre-wrap leading-relaxed">{selected.compileError}</pre>
           </div>
         {/if}
-
-        <div class="flex-1 relative overflow-hidden">
-          <CodeEditor
-            value={selected.code}
-            onchange={(val) => (selected.code = val)}
-            darkMode={isDark}
-          />
-        </div>
       {:else}
         <div
           class="flex-1 flex flex-col items-center justify-center text-slate-300 dark:text-slate-800 space-y-4"

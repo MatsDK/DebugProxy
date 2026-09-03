@@ -1,4 +1,5 @@
 import { SvelteMap } from "svelte/reactivity";
+import { getScriptDiagnostics, ts } from "./scriptLanguageService";
 import { taurpc } from "./rpc";
 import { toast } from "./toast.svelte";
 import type { ScriptConfig, ProxyEvent } from "$lib/types";
@@ -146,6 +147,18 @@ export class ScriptsState {
     }
   }
 
+  /** Type-checks against the ambient Req/Res/ScriptProxy types, then strips TS syntax to plain JS. */
+  private async transpileTypeScript(code: string): Promise<string> {
+    const diagnostics = await getScriptDiagnostics(code);
+    if (diagnostics.length > 0) {
+      const { message, line } = diagnostics[0];
+      throw new Error(line ? `${message} (line ${line})` : message);
+    }
+    return ts.transpileModule(code, {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+    }).outputText;
+  }
+
   private async compileAll() {
     for (const s of this.list) {
       // Re-compile pattern from multiple filters
@@ -162,7 +175,18 @@ export class ScriptsState {
         continue;
       }
 
-      const blob = new Blob([s.code], { type: "application/javascript" });
+      let jsCode: string;
+      try {
+        jsCode = await this.transpileTypeScript(s.code);
+      } catch (e: any) {
+        this.modules.delete(s.id);
+        s.compileError = e.message;
+        this.proxy.log(`[System] ${s.name} compilation error: ${e.message}`, "0", "error");
+        toast.error(`Compile Error (${s.name}): ${e.message}`, 5000);
+        continue;
+      }
+
+      const blob = new Blob([jsCode], { type: "application/javascript" });
       const url = URL.createObjectURL(blob);
       try {
         const mod = await import(/* @vite-ignore */ url);
@@ -519,7 +543,7 @@ export class ScriptsState {
   }
 }
 
-const DEFAULT_SCRIPT = `export async function onRequest(req, proxy) {
+const DEFAULT_SCRIPT = `export async function onRequest(req: Req, proxy: ScriptProxy) {
   // ── URL & Headers ──
   // proxy.log(req.url.hostname);
   // req.url.searchParams.set("debug", "true");
@@ -539,7 +563,7 @@ const DEFAULT_SCRIPT = `export async function onRequest(req, proxy) {
   // proxy.store.set("token", "abc");
 }
 
-export async function onResponse(res, proxy) {
+export async function onResponse(res: Res, proxy: ScriptProxy) {
   // res.status = 200;
   // if (res.json) res.json.injected = true;
   // proxy.log(res.contentType);
